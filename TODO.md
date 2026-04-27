@@ -4,6 +4,9 @@
 
 ## V2 Features
 
+### Agents — High Priority
+- [x] **Research agent** — ReAct agent (`langchain.agents.create_agent`) with Tavily as a callable tool; embedded inside sentiment agent; reasons about sector-specific searches autonomously (e.g. IT → deal wins/visa, Pharma → USFDA/ANDA). Replaces hardcoded single query.
+
 ### Agents
 - [ ] Position review agent — daily re-check of open position thesis, early exit signals
 - [ ] Macro agent — dedicated Nifty/VIX/FII flow check before any trade (currently inside risk agent)
@@ -17,6 +20,8 @@
 - [ ] Add minimum market cap filter
 
 ### Risk & Position Sizing
+- [ ] ATR-based stop loss — replace fixed 7% stop with `price - 2×ATR` so volatile stocks get wider stops and aren't shaken out by normal swings
+- [ ] Cash buffer enforcement — always keep 20-40% cash uninvested; currently 4 positions at 25% each = 100% invested with no buffer for crashes
 - [ ] Sector exposure limit — block new trade if >40% already in same sector
 - [ ] Time-based exit — close position if no significant move after N days
 
@@ -52,11 +57,12 @@
 - [x] Config — pydantic-settings, type-safe
 - [x] Database — SQLAlchemy + models
 - [x] Logging — structlog
-- [ ] Market context — Nifty day change, sector performance, 52w position, divergence
-- [ ] Technical agent — indicators + Claude Haiku interpretation
-- [ ] Sentiment agent — Tavily news + Claude Haiku scoring
-- [ ] Risk agent — deterministic position sizing and trade gates
-- [ ] Decision agent — Claude Sonnet final BUY/HOLD/SELL
+- [x] Market context — Nifty day change, sector performance, 52w position, divergence
+- [x] Technical agent — indicators + Claude Haiku interpretation
+- [x] Sentiment agent — ReAct research agent (Tavily tool) + Claude Haiku scoring, sector-aware queries
+- [x] Risk agent — deterministic position sizing, 3 trade gates, stop loss/take profit calculation
+- [x] Decision agent — Claude Sonnet final BUY/HOLD/SELL with 6-step decision framework
+- [x] Shared utilities — `indicators.py` (compute_indicators), `prompt_helpers.py` (format_market_context)
 - [ ] LangGraph orchestrator — parallel agents, state management
 - [ ] Portfolio simulator — cash, positions, P&L tracking
 - [ ] Scheduler — morning scan job

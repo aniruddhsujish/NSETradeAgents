@@ -10,24 +10,27 @@ Universe (NSE Smallcap 250 + Midcap 150)
    Math Screener (7 filters: RSI, SMA, ATR, volume, liquidity)
         ↓
    LangGraph Pipeline (per candidate)
-        ├── Technical Agent (Claude Haiku — indicators + pattern interpretation)
-        ├── Sentiment Agent (Tavily news + Claude Haiku scoring)
-        └── Market Context (Nifty 50, sector index, 52w position — no LLM)
-              ↓
-         Risk Agent (deterministic — position sizing, trade gates)
-              ↓
-        Decision Agent (Claude Sonnet — final BUY/HOLD/SELL)
-              ↓
-       Portfolio Simulator (cash, positions, P&L)
+        ├── Technical Agent    (Claude Haiku — 20 indicators + structured interpretation)
+        ├── Sentiment Agent    (ReAct research agent → Claude Haiku scoring)
+        │     └── Research Agent (create_agent + Tavily — sector-aware autonomous search)
+        └── Market Context     (Nifty 50, sector index, 52w position — no LLM)
+              ↓  (fan-in — all three must complete)
+         Risk Agent            (deterministic — 3 trade gates + position sizing)
+              ↓  (conditional routing)
+        Decision Agent         (Claude Sonnet — 6-step framework, final BUY/HOLD/SELL)
+              ↓  (conditional routing)
+       Portfolio Simulator     (cash, positions, P&L tracking)
 ```
 
-Technical and sentiment agents run in **parallel** via LangGraph fan-out. Risk and decision run sequentially after both complete.
+Technical, sentiment, and market context agents run in **parallel** via LangGraph fan-out. Risk and decision run sequentially after all three complete.
 
 ## Tech Stack
 
-- **Orchestration**: LangGraph
-- **LLM**: Anthropic Claude (Haiku for analysis agents, Sonnet for final decision)
-- **News**: Tavily API
+- **Orchestration**: LangGraph (parallel fan-out, conditional routing, typed state)
+- **LLM**: Anthropic Claude (Haiku for specialist agents, Sonnet for final decision)
+- **Structured output**: LangChain `with_structured_output` + Pydantic (function calling)
+- **Agentic search**: `langchain.agents.create_agent` ReAct loop with Tavily tool
+- **News**: Tavily API (domain-filtered, advanced search depth)
 - **Market data**: yfinance (NSE via Yahoo Finance)
 - **Database**: SQLAlchemy + SQLite (PostgreSQL-ready)
 - **API / Dashboard**: FastAPI + Jinja2
@@ -48,7 +51,8 @@ app/
 │   ├── universe.py         # Fetch NSE smallcap/midcap universe
 │   └── filters.py          # Math filters
 ├── utils/
-│   └── indicators.py       # Shared technical indicator computations
+│   ├── indicators.py       # Shared technical indicator computations (RSI, MACD, BB, ATR)
+│   └── prompt_helpers.py   # Shared prompt formatting utilities
 ├── graph/
 │   ├── state.py            # LangGraph state definition
 │   └── graph.py            # LangGraph pipeline
@@ -102,17 +106,24 @@ Targets NSE smallcap and midcap stocks for swing trades (1-4 week hold).
 
 **Position sizing:**
 - Max 4 open positions
-- Max 25% portfolio per position
-- 7% stop loss, 18% take profit
+- Max 25% portfolio per position (minimum ₹5,000 position value)
+- 7% stop loss, 18% take profit → 2.57x risk/reward ratio
+
+**Decision pipeline:**
+- Technical and sentiment agents run in parallel (LangGraph fan-out)
+- Risk gates are deterministic and non-negotiable
+- Decision agent (Sonnet) applies a 6-step framework: risk gate → signal alignment → entry timing → market context → conviction threshold → skepticism check
 
 ## Status
 
 - [x] Screener — universe fetch + math filters
 - [x] Market context agent
-- [x] Technical analysis agent
-- [x] Sentiment analysis agent
-- [ ] Risk agent
-- [ ] Decision agent
-- [ ] LangGraph orchestrator
-- [ ] Portfolio simulator
-- [ ] FastAPI dashboard
+- [x] Technical analysis agent (20 indicators, structured output)
+- [x] Sentiment agent — ReAct research agent + Haiku scoring
+- [x] Risk agent — deterministic gates + position sizing
+- [x] Decision agent — Claude Sonnet 6-step framework
+- [x] Shared utilities — indicators, prompt helpers
+- [ ] LangGraph orchestrator — parallel agents, typed state, conditional routing
+- [ ] Portfolio simulator — cash, positions, P&L tracking
+- [ ] Scheduler — morning scan job
+- [ ] FastAPI dashboard — portfolio, positions, trade history

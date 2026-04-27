@@ -7,6 +7,7 @@ from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field
 from app.core.config import settings
 from app.utils.indicators import compute_indicators
+from app.utils.prompt_helpers import format_market_context
 
 logger = structlog.get_logger()
 llm = ChatAnthropic(
@@ -47,17 +48,7 @@ def run_technical_analysis(ticker: str, market_context: dict | None = None) -> d
     df = df.dropna(subset=["Close", "Volume"])
     ind = compute_indicators(df)
 
-    mkt_block = ""
-    if market_context:
-        mkt_block = f"""
-Market context:
-- Nifty 50 today: {market_context.get('nifty_day_pct', 'N/A')}% (5d: {market_context.get('nifty_5d_pct', 'N/A')}%)
-- Market tone: {market_context.get('market_label', 'N/A')}
-- Sector ({market_context.get('sector', 'N/A')}) today: {market_context.get('sector_day_pct', 'N/A')}%
-- Distance from 52w high: {market_context.get('pct_from_52w_high', 'N/A')}%
-- Distance from 52w low:  {market_context.get('pct_from_52w_low', 'N/A')}%
-- {market_context.get('divergence_note', '')}
-"""
+    mkt_block = format_market_context(market_context)
 
     sma200_str = f"Rs.{ind['sma200']}" if ind["sma200"] else "N/A (< 200 days data)"
 
