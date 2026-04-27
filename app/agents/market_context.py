@@ -21,21 +21,30 @@ SECTOR_MAP = {
 }
 
 
-def _day_change_pct(ticker_sym: str) -> float | None:
-    """Return today's % change for a given yfinance ticker symbol"""
+def _day_change_pct(ticker_sym: str, df: pd.DataFrame | None = None) -> float | None:
+    """Return today's % change for a given yfinance ticker symbol.
+    If df is provided (pre-fetched), uses it directly instead of downloading."""
     try:
-        data = yf.download(
-            ticker_sym, period="5d", interval="1d", progress=False, auto_adjust=True
-        )
-        if data is None or len(data) < 2:
-            return None
-        close = data["Close"].squeeze()
+        if df is not None and len(df) >= 2:
+            close = df["Close"].squeeze()
+        else:
+            data = yf.download(
+                ticker_sym, period="5d", interval="1d", progress=False, auto_adjust=True
+            )
+            if data is None or len(data) < 2:
+                return None
+            close = data["Close"].squeeze()
         return float((close.iloc[-1] - close.iloc[-2]) / close.iloc[-2] * 100)
     except Exception:
         return None
 
 
-def fetch_market_context(ticker: str) -> dict:
+def fetch_market_context(
+    ticker: str,
+    ticker_df: pd.DataFrame | None = None,
+    ticker_info: dict | None = None,
+    nifty_df: pd.DataFrame | None = None,
+) -> dict:
     """
     Collect market-wide and stock-level context
 
@@ -51,9 +60,9 @@ def fetch_market_context(ticker: str) -> dict:
     """
     logger.info("market_context_start", ticker=ticker)
 
-    # --- 1. Nifty 50 ---------------------------------------------------------------------
+    # --- 1. Nifty 50 — use pre-fetched df if available --------------------------------
     try:
-        nifty_raw = yf.download(
+        nifty_raw = nifty_df if nifty_df is not None else yf.download(
             "^NSEI", period="10d", interval="1d", progress=False, auto_adjust=True
         )
         nifty_close = nifty_raw["Close"].squeeze()
@@ -75,11 +84,11 @@ def fetch_market_context(ticker: str) -> dict:
     else:
         market_label = "neutral"
 
-    # --- 2. Sector ------------------------------------------------------------------------
+    # --- 2. Sector — use pre-fetched info if available --------------------------------
     sector = "Unknown"
     sector_day_pct = None
     try:
-        info = yf.Ticker(ticker).info
+        info = ticker_info if ticker_info is not None else yf.Ticker(ticker).info
         sector = info.get("sector") or info.get("industry") or "Unknown"
 
         # Direct lookup — keys match yfinance sector names exactly
@@ -89,11 +98,11 @@ def fetch_market_context(ticker: str) -> dict:
     except Exception as e:
         logger.warning("sector_fetch_failed", ticker=ticker, error=str(e))
 
-    # --- 3. 52-week position -------------------------------------------------------------
+    # --- 3. 52-week position — use pre-fetched ticker_df (12mo covers 52wk) ----------
     pct_from_52w_high = None
     pct_from_52w_low = None
     try:
-        hist = yf.download(
+        hist = ticker_df if ticker_df is not None else yf.download(
             ticker, period="52wk", interval="1d", progress=False, auto_adjust=True
         )
 
@@ -106,8 +115,8 @@ def fetch_market_context(ticker: str) -> dict:
     except Exception as e:
         logger.warning("52w_fetch_failed", ticker=ticker, error=str(e))
 
-    # --- 4. Divergence note --------------------------------------------------------------
-    stock_day_pct = _day_change_pct(ticker)
+    # --- 4. Divergence note — compute from pre-fetched ticker_df if available --------
+    stock_day_pct = _day_change_pct(ticker, df=ticker_df)
     divergence_note = ""
     if stock_day_pct is not None and sector_day_pct is not None:
         if stock_day_pct > 1.0 and sector_day_pct < -0.5:

@@ -53,7 +53,11 @@ class SentimentSignal(BaseModel):
 scoring_chain = scoring_llm.with_structured_output(SentimentSignal)
 
 
-def run_sentiment_analysis(ticker: str, sector: str = "Unknown") -> dict:
+def run_sentiment_analysis(
+    ticker: str,
+    sector: str = "Unknown",
+    ticker_info: dict | None = None,
+) -> dict:
     """
     Two-step sentiment analysis:
     1. Research agent autonomously decides what to search and fetches relevant news
@@ -63,9 +67,9 @@ def run_sentiment_analysis(ticker: str, sector: str = "Unknown") -> dict:
 
     symbol = ticker.replace(".NS", "")
 
-    # Get company name from yfinance
+    # Use pre-fetched info if available, else fall back to yfinance
     try:
-        info = yf.Ticker(ticker).info
+        info = ticker_info if ticker_info is not None else yf.Ticker(ticker).info
         company_name = info.get("longName") or info.get("shortName") or symbol
         if sector == "Unknown":
             sector = info.get("sector") or info.get("industry") or "Unknown"

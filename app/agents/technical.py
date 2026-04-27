@@ -24,14 +24,21 @@ class TechnicalSignal(BaseModel):
 chain = llm.with_structured_output(TechnicalSignal)
 
 
-def run_technical_analysis(ticker: str, market_context: dict | None = None) -> dict:
+def run_technical_analysis(
+    ticker: str,
+    market_context: dict | None = None,
+    ticker_df=None,
+) -> dict:
     logger.info("technical_start", ticker=ticker)
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        df = yf.download(
-            ticker, period="12mo", interval="1d", progress=False, auto_adjust=True
-        )
+    if ticker_df is not None:
+        df = ticker_df
+    else:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            df = yf.download(
+                ticker, period="12mo", interval="1d", progress=False, auto_adjust=True
+            )
 
     if df is None or len(df) < 50:
         logger.warning("technical_no_data", ticker=ticker)
