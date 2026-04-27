@@ -10,6 +10,9 @@ Universe (NSE Smallcap 250 + Midcap 150)
    Math Screener (7 filters: RSI, SMA, ATR, volume, liquidity)
         ↓
    LangGraph Pipeline (per candidate)
+        ↓
+   Fetch Data Node    (yfinance — ticker history, ticker info, Nifty — single download)
+        ↓  (fan-out — parallel)
         ├── Technical Agent    (Claude Haiku — 20 indicators + structured interpretation)
         ├── Sentiment Agent    (ReAct research agent → Claude Haiku scoring)
         │     └── Research Agent (create_agent + Tavily — sector-aware autonomous search)
@@ -22,7 +25,7 @@ Universe (NSE Smallcap 250 + Midcap 150)
        Portfolio Simulator     (cash, positions, P&L tracking)
 ```
 
-Technical, sentiment, and market context agents run in **parallel** via LangGraph fan-out. Risk and decision run sequentially after all three complete.
+A `fetch_data_node` runs before the parallel fan-out, downloading all yfinance data once. The three parallel agents read from LangGraph state instead of making concurrent requests (prevents Yahoo Finance 401 rate-limit errors). Risk and decision run sequentially after all three complete.
 
 ## Tech Stack
 
@@ -123,7 +126,7 @@ Targets NSE smallcap and midcap stocks for swing trades (1-4 week hold).
 - [x] Risk agent — deterministic gates + position sizing
 - [x] Decision agent — Claude Sonnet 6-step framework
 - [x] Shared utilities — indicators, prompt helpers
-- [ ] LangGraph orchestrator — parallel agents, typed state, conditional routing
+- [x] LangGraph orchestrator — parallel fan-out, typed state, conditional routing, tested end-to-end
 - [ ] Portfolio simulator — cash, positions, P&L tracking
 - [ ] Scheduler — morning scan job
 - [ ] FastAPI dashboard — portfolio, positions, trade history

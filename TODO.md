@@ -63,7 +63,8 @@
 - [x] Risk agent — deterministic position sizing, 3 trade gates, stop loss/take profit calculation
 - [x] Decision agent — Claude Sonnet final BUY/HOLD/SELL with 6-step decision framework
 - [x] Shared utilities — `indicators.py` (compute_indicators), `prompt_helpers.py` (format_market_context)
-- [ ] LangGraph orchestrator — parallel agents, state management
+- [x] LangGraph orchestrator — `fetch_data → [market_context, technical, sentiment] → fetch_price → risk → decision → execute/blocked`, typed state, conditional routing
+- [x] yfinance 401 fix — `fetch_data_node` pre-fetches all market data once before parallel fan-out; agents read from state instead of hitting Yahoo Finance concurrently
 - [ ] Portfolio simulator — cash, positions, P&L tracking
 - [ ] Scheduler — morning scan job
 - [ ] FastAPI dashboard — portfolio, positions, trade history
