@@ -26,10 +26,7 @@ class PortfolioSimulator:
         with get_db() as db:
             open_trades = db.query(Trade).filter(Trade.status == "open").all()
             cash = self._compute_cash(db)
-        return {
-            "cash": round(cash, 2),
-            "open_positions": len(open_trades),
-            "positions": [
+            positions = [
                 {
                     "ticker": t.ticker,
                     "entry_price": t.entry_price,
@@ -40,7 +37,11 @@ class PortfolioSimulator:
                     "opened_at": t.opened_at,
                 }
                 for t in open_trades
-            ],
+            ]
+        return {
+            "cash": round(cash, 2),
+            "open_positions": len(open_trades),
+            "positions": positions,
         }
 
     def open_trade(

@@ -113,10 +113,11 @@ def screen(tickers: list[str], config: dict) -> list[dict]:
                 counts["rsi"] += 1
                 continue
 
-            # Passed — compute ranking score
+            # Passed — compute ranking score (all components normalised to [0, 1])
+            vol_norm      = min(ind["volume_ratio"] / 5.0, 1.0)
             momentum_norm = min(max(ind["momentum_5d"], -15), 15) / 15
             atr_norm      = min(ind["atr_pct"] / 5.0, 1.0)
-            score = (ind["volume_ratio"] * 0.40) + (momentum_norm * 0.35) + (atr_norm * 0.25)
+            score = (vol_norm * 0.40) + (momentum_norm * 0.35) + (atr_norm * 0.25)
 
             candidates.append({
                 "ticker":          ticker,

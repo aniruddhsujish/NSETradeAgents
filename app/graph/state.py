@@ -24,4 +24,3 @@ class TradingState(TypedDict):
 
     # Final
     trade_result: dict | None
-    error: str | None

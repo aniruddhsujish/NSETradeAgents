@@ -14,8 +14,20 @@ def run_risk_check(
 ) -> dict:
     logger.info("risk_start", ticker=ticker, price=current_price)
 
+    if current_price <= 0:
+        logger.warning("risk_invalid_price", ticker=ticker, price=current_price)
+        return {
+            "approved": False,
+            "block_reasons": ["invalid price — technical agent likely failed"],
+            "quantity": 0,
+            "position_size_inr": 0,
+            "stop_loss": 0,
+            "take_profit": 0,
+            "notes": "",
+        }
+
     block_reasons = []
-    max_position_value = portfolio_cash * settings.max_position_pct
+    max_position_value = settings.starting_capital * settings.max_position_pct
 
     # Gate 1: max open positions
     if open_positions >= settings.max_positions:
@@ -60,7 +72,7 @@ def run_risk_check(
     risk_reward = round(settings.take_profit_pct / settings.stop_loss_pct, 2)
 
     notes = (
-        f"Position: ₹{actual_position_value:.0f} ({actual_position_value/portfolio_cash*100:.1f}% of cash) | "
+        f"Position: ₹{actual_position_value:.0f} ({actual_position_value/settings.starting_capital*100:.1f}% of portfolio) | "
         f"Risk/Reward: {risk_reward}x | "
         f"Stop: ₹{stop_loss} | Target: ₹{take_profit}"
     )

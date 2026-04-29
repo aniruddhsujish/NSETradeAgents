@@ -71,7 +71,7 @@ def fetch_market_context(
         )
         nifty_5d_pct = float(
             (nifty_close.iloc[-1] - nifty_close.iloc[-6]) / nifty_close.iloc[-6] * 100
-        )
+        ) if len(nifty_close) >= 6 else 0.0
     except Exception as e:
         logger.warning("nifty_fetch_failed", error=str(e))
         nifty_day_pct = 0.0

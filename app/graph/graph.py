@@ -132,10 +132,13 @@ def execute_node(state: TradingState) -> dict:
         quantity=risk.get("quantity"),
         price=state["current_price"],
         confidence=decision.get("confidence"),
+        simulation=settings.simulation_mode,
     )
 
-    # TODO: Phase 2 — Kite API call goes here
-    # For now, return trade details for portfolio simulator to record
+    if not settings.simulation_mode:
+        # Phase 2: Kite API order placement goes here
+        raise NotImplementedError("Live trading via Kite API not yet implemented")
+
     return {
         "trade_result": {
             "action": "BUY",
@@ -233,6 +236,5 @@ def analyze_ticker(ticker: str, portfolio_cash: float, open_positions: int) -> d
         "risk_result": None,
         "decision": None,
         "trade_result": None,
-        "error": None,
     }
     return trading_graph.invoke(initial_state)

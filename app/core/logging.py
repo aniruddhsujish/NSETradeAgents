@@ -12,6 +12,7 @@ def setup_logging(level: str = "INFO"):
         processors=[
             structlog.stdlib.add_log_level,
             structlog.stdlib.add_logger_name,
+            structlog.processors.TimeStamper(fmt="%H:%M:%S"),
             structlog.dev.ConsoleRenderer(),
         ],
         wrapper_class=structlog.stdlib.BoundLogger,
