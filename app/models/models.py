@@ -43,6 +43,7 @@ class PortfolioSnapshot(Base):
     open_positions: Mapped[int]
     daily_pnl: Mapped[float] = mapped_column(default=0.0)
     cumulative_pnl: Mapped[float] = mapped_column(default=0.0)
+    unrealised_pnl: Mapped[float] = mapped_column(default=0.0)
     snapshot_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime, server_default=func.now()
     )

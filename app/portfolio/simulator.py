@@ -142,7 +142,9 @@ class PortfolioSimulator:
             )
             return trade
 
-    def save_snapshot(self) -> PortfolioSnapshot:
+    def save_snapshot(
+        self, open_prices: dict[str, float] | None = None
+    ) -> PortfolioSnapshot:
         with get_db() as db:
             open_trades = db.query(Trade).filter(Trade.status == "open").all()
             closed_trades = db.query(Trade).filter(Trade.status == "closed").all()
@@ -150,7 +152,17 @@ class PortfolioSimulator:
             invested = sum(t.entry_value for t in open_trades)
             realised_pnl = sum(t.pnl for t in closed_trades if t.pnl is not None)
             cash = settings.starting_capital - invested + realised_pnl
-            total_value = cash + invested
+
+            if open_prices:
+                market_value = sum(
+                    open_prices.get(t.ticker, t.entry_price) * t.quantity
+                    for t in open_trades
+                )
+                unrealised_pnl = round(market_value - invested, 2)
+                total_value = cash + market_value
+            else:
+                unrealised_pnl = 0.0
+                total_value = cash + invested
 
             today = date.today()
             daily_pnl = sum(
@@ -168,6 +180,7 @@ class PortfolioSimulator:
                 open_positions=len(open_trades),
                 daily_pnl=round(daily_pnl, 2),
                 cumulative_pnl=round(realised_pnl, 2),
+                unrealised_pnl=unrealised_pnl,
             )
             db.add(snapshot)
             db.flush()
@@ -176,6 +189,7 @@ class PortfolioSimulator:
                 "snapshot_saved",
                 total_value=snapshot.total_value,
                 cash=snapshot.cash,
+                unrealised_pnl=snapshot.unrealised_pnl,
                 daily_pnl=snapshot.daily_pnl,
                 cumulative_pnl=snapshot.cumulative_pnl,
             )
