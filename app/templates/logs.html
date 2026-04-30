@@ -1,0 +1,103 @@
+{% extends "base.html" %} {% block title %}Logs{% endblock %} {% block content
+%}
+<div class="flex items-center justify-between mb-6">
+  <h1 class="text-slate-300 text-sm uppercase tracking-widest">System Logs</h1>
+  <div class="flex items-center gap-2">
+    <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+    <span class="text-xs text-slate-500">Live</span>
+  </div>
+</div>
+
+<div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+  <!-- Log header -->
+  <div
+    class="grid grid-cols-12 px-4 py-2 border-b border-slate-800 text-slate-600 text-xs uppercase tracking-widest"
+  >
+    <span class="col-span-1">Time</span>
+    <span class="col-span-1">Level</span>
+    <span class="col-span-2">Module</span>
+    <span class="col-span-8">Event</span>
+  </div>
+
+  <!-- Log entries-->
+  <div
+    id="log-container"
+    class="divide-y divide-slate-800 max-h-[70vh] overflow-y-auto flex flex-col-reverse"
+  >
+    {% for entry in entries %}
+    <div
+      class="grid grid-cols-12 px-4 py-2 text-xs hover:bg-slate-800 transition font-mono"
+    >
+      <span class="col-span-1 text-slate-600">
+        {{ entry.timestamp if entry.timestamp else "—" }}
+      </span>
+
+      <span
+        class="col-span-1 {% if entry.level == 'error' %}text-red-400 {% elif entry.level == 'warning' %}text-yellow-400 {% elif entry.level == 'info' %}text-emerald-400 {% else %}text-slate-500{% endif %}"
+      >
+        {{ (entry.level or "—") | upper }}
+      </span>
+
+      <span class="col-span-2 text-slate-500 truncate">
+        {{ entry.logger if entry.logger else "—" }}
+      </span>
+
+      <span class="col-span-8 text-slate-300">
+        {{ entry.event if entry.event else "—" }} {% set excluded = ["event",
+        "level", "logger", "timestamp"] %} {% for key, value in entry.items() %}
+        {% if key not in excluded %}
+        <span class="text-slate-600"> {{ key }}=</span
+        ><span class="text-slate-400">{{ value }}</span>
+        {% endif %} {% endfor %}
+      </span>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<script>
+  const container = document.getElementById("log-container");
+  const levelColors = {
+    error: "text-red-400",
+    warning: "text-yellow-400",
+    info: "text-emerald-400",
+  };
+  const excluded = new Set(["event", "level", "logger", "timestamp"]);
+
+  const source = new EventSource("/api/logs/stream");
+  source.onmessage = (e) => {
+    const entry = JSON.parse(e.data);
+
+    const level = (entry.level || "—").toUpperCase();
+    const logger = entry.logger || "—";
+    const event = entry.event || "—";
+    const time = entry.timestamp || "—";
+    const color = levelColors[entry.level] || "text-slate-500";
+
+    const extras = Object.entries(entry)
+      .filter(([k]) => !excluded.has(k))
+      .map(
+        ([k, v]) =>
+          `<span class="text-slate-600"> ${k}=</span><span class="text-slate-400">${v}</span>`,
+      )
+      .join("");
+
+    const row = document.createElement("div");
+    row.className =
+      "grid grid-cols-12 px-4 py-2 text-xs hover:bg-slate-800 transition font-mono border-b border-slate-800";
+    row.innerHTML = `                                                                                                                                                                              
+              <span class="col-span-1 text-slate-600">${time}</span>
+              <span class="col-span-1 ${color}">${level}</span>                                                                                                                                          
+              <span class="col-span-2 text-slate-500 truncate">${logger}</span>
+              <span class="col-span-8 text-slate-300">${event}${extras}</span>                                                                                                                           
+          `;
+
+    container.prepend(row);
+  };
+
+  source.onerror = () => {
+    source.close();
+  };
+</script>
+
+{% endblock %}

@@ -1,6 +1,15 @@
 import structlog
 import logging
 import sys
+from collections import deque
+
+log_buffer: deque = deque(maxlen=500)
+
+
+class _BufferProcessor:
+    def __call__(self, logger, method, event_dict):
+        log_buffer.append(dict(event_dict))
+        return event_dict
 
 
 def setup_logging(level: str = "INFO"):
@@ -13,6 +22,7 @@ def setup_logging(level: str = "INFO"):
             structlog.stdlib.add_log_level,
             structlog.stdlib.add_logger_name,
             structlog.processors.TimeStamper(fmt="%H:%M:%S"),
+            _BufferProcessor(),
             structlog.dev.ConsoleRenderer(),
         ],
         wrapper_class=structlog.stdlib.BoundLogger,

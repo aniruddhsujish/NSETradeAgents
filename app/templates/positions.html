@@ -1,0 +1,152 @@
+{% extends "base.html" %} {% block title %}Positions{% endblock %} {% block
+content %}
+
+<div class="flex items-center justify-between mb-6">
+  <h1 class="text-slate-300 text-sm uppercase tracking-widest">
+    Open Positions
+  </h1>
+  <span class="text-xs text-slate-500"
+    >{{ trades | length }} / 4 slots used</span
+  >
+</div>
+
+{% if not trades %}
+<div class="bg-slate-900 border border-slate-800 rounded-xl p-12 text-center">
+  <p class="text-slate-500 text-sm">No open positions.</p>
+</div>
+
+{% else %}
+<div class="flex flex-col gap-4">
+  {% for trade in trades %}
+  <div class="bg-slate-900 border border-slate-800 rounded-xl p-6">
+    <!-- Header row -->
+    <div class="flex items-center justify-between mb-4">
+      <div class="flex items-center gap-3">
+        <span class="text-white font-bold text-lg"
+          >{{ trade.ticker.replace(".NS", "") }}</span
+        >
+        <span
+          class="text-xs px-2 py-0.5 rounded-full {% if trade.unrealised_pnl > 0 %}bg-emerald-900 text-emerald-400 {% elif trade.unrealised_pnl < 0 %}bg-red-900 text-red-400 {% else %}bg-slate-800 text-slate-400{% endif %}"
+        >
+          {{ "+" if trade.unrealised_pnl > 0 }}{{ trade.unrealised_pct }}%
+        </span>
+      </div>
+      <span class="text-xs text-slate-500">
+        Opened {{ trade.opened_at.strftime("%d %b %Y, %H:%M") if trade.opened_at
+        else "—" }}
+      </span>
+    </div>
+
+    <!-- Stats grid -->
+    <div class="grid grid-cols-2 md:grid-cols-7 gap-4 mb-4">
+      <div>
+        <p class="text-slate-500 text-xs uppercase tracking-widest mb-1">
+          Entry
+        </p>
+        <p class="text-white font-bold">
+          ₹{{ "{:,.2f}".format(trade.entry_price) }}
+        </p>
+      </div>
+
+      <div>
+        <p class="text-slate-500 text-xs uppercase tracking-widest mb-1">
+          Current
+        </p>
+        <p
+          class="font-bold {% if trade.current_price > trade.entry_price %}text-emerald-400 {% elif trade.current_price < trade.entry_price %}text-red-400 {% else %}text-white{% endif %}"
+        >
+          ₹{{ "{:,.2f}".format(trade.current_price) }}
+        </p>
+      </div>
+
+      <div>
+        <p class="text-slate-500 text-xs uppercase tracking-widest mb-1">
+          Unrealised P&L
+        </p>
+        <p
+          class="font-bold {% if trade.unrealised_pnl > 0 %}text-emerald-400 {% elif trade.unrealised_pnl < 0 %}text-red-400 {% else %}text-slate-400{% endif %}"
+        >
+          {{ "+" if trade.unrealised_pnl > 0 }}₹{{
+          "{:,.0f}".format(trade.unrealised_pnl) }}
+        </p>
+      </div>
+
+      <div>
+        <p class="text-slate-500 text-xs uppercase tracking-widest mb-1">
+          Quantity
+        </p>
+        <p class="text-white font-bold">{{ trade.quantity }} shares</p>
+      </div>
+
+      <div>
+        <p class="text-slate-500 text-xs uppercase tracking-widest mb-1">
+          Invested
+        </p>
+        <p class="text-white font-bold">
+          ₹{{ "{:,.0f}".format(trade.entry_value) }}
+        </p>
+      </div>
+
+      <div>
+        <p class="text-slate-500 text-xs uppercase tracking-widest mb-1">
+          Stop Loss
+        </p>
+        <p class="text-red-400 font-bold">
+          ₹{{ "{:,.2f}".format(trade.stop_loss) }}
+        </p>
+      </div>
+
+      <div>
+        <p class="text-slate-500 text-xs uppercase tracking-widest mb-1">
+          Target
+        </p>
+        <p class="text-emerald-400 font-bold">
+          ₹{{ "{:,.2f}".format(trade.take_profit) }}
+        </p>
+      </div>
+    </div>
+
+    <!-- Progress bar — current price between stop and target -->
+    {% set range = trade.take_profit - trade.stop_loss %} {% set raw_progress =
+    ((trade.current_price - trade.stop_loss) / range * 100) | round | int %} {%
+    set progress = [0, [raw_progress, 100] | min] | max %}
+    <div class="mb-4">
+      <div class="flex justify-between text-xs text-slate-600 mb-1">
+        <span>Stop ₹{{ "{:,.2f}".format(trade.stop_loss) }}</span>
+        <span class="text-slate-400"
+          >Current ₹{{ "{:,.2f}".format(trade.current_price) }}</span
+        >
+        <span>Target ₹{{ "{:,.2f}".format(trade.take_profit) }}</span>
+      </div>
+      <div class="w-full bg-slate-800 rounded-full h-1.5">
+        <div
+          class="h-1.5 rounded-full transition-all {% if trade.unrealised_pnl >= 0 %}bg-emerald-400{% else %}bg-red-400{% endif %}"
+          style="width: {{ progress }}%"
+        ></div>
+      </div>
+    </div>
+
+    <!-- Confidence + reasoning -->
+    <div x-data="{expanded: false}">
+      <div class="flex items-center gap-3 mb-1">
+        <span class="text-xs text-slate-500">
+          {{ trade.confidence | int }}% confidence
+        </span>
+        <button
+          @click="expanded = !expanded"
+          class="text-xs text-slate-600 hover:text-slate-400 transition"
+        >
+          <span x-text="expanded ? '↑ collapse' : '↓ read more'"></span>
+        </button>
+      </div>
+      <p
+        :class="expanded ? '' : 'line-clamp-2'"
+        class="text-slate-400 text-xs leading-relaxed transition-all"
+      >
+        {{ trade.reasoning or "No reasoning provided." }}
+      </p>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %} {% endblock %}

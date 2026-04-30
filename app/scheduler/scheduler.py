@@ -6,7 +6,7 @@ import yfinance as yf
 import structlog
 from datetime import datetime
 from functools import lru_cache
-from apscheduler.schedulers.blocking import BlockingScheduler
+from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
@@ -141,13 +141,10 @@ def review_positions() -> None:
     simulator.save_snapshot(open_prices=live_prices if live_prices else None)
 
 
-def start() -> None:
-    init_db()
-    logger.info("scheduler_starting")
-
+def create_scheduler() -> BackgroundScheduler:
     from main import run_scan
 
-    sched = BlockingScheduler(timezone=IST)
+    sched = BackgroundScheduler(timezone=IST)
 
     sched.add_job(
         run_scan,
@@ -163,11 +160,4 @@ def start() -> None:
         review_position="Every 15 mins",
     )
 
-    try:
-        sched.start()
-    except (KeyboardInterrupt, SystemExit):
-        logger.info("scheduler_stopped")
-
-
-if __name__ == "__main__":
-    start()
+    return sched

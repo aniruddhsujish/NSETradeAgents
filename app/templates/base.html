@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en" class="h-full">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{% block title %}Swing Trading Bot{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js" defer></script>
+    <script>
+      tailwind.config = {
+        safelist: ["line-clamp-2", "line-clamp-none"],
+        theme: {
+          extend: {
+            fontFamily: { mono: ["ui-monospace", "monospace"] },
+          },
+        },
+      };
+    </script>
+  </head>
+  <body class="bg-slate-950 text-slate-100 min-h-full font-mono">
+    <!-- Nav -->
+    <nav class="border-b border-slate-800 px-6 py-4 flex items-center gap-8">
+      <span class="text-emerald-400 font-bold tracking-widest text-sm"
+        >SWING BOT</span
+      >
+      <a href="/" class="text-sm text-slate-400 hover:text-white transition"
+        >Overview</a
+      >
+      <a
+        href="/positions"
+        class="text-sm text-slate-400 hover:text-white transition"
+        >Positions</a
+      >
+      <a
+        href="/history"
+        class="text-sm text-slate-400 hover:text-white transition"
+        >History</a
+      >
+      <a href="/logs" class="text-sm text-slate-400 hover:text-white transition"
+        >Logs</a
+      >
+    </nav>
+
+    <!-- Page content -->
+    <main class="max-w-7xl mx-auto px-6 py-8">
+      {% block content %}{% endblock %}
+    </main>
+  </body>
+</html>

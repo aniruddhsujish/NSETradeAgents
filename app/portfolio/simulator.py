@@ -154,6 +154,10 @@ class PortfolioSimulator:
             cash = settings.starting_capital - invested + realised_pnl
 
             if open_prices:
+                for trade in open_trades:
+                    price = open_prices.get(trade.ticker)
+                    if price:
+                        trade.current_price = price
                 market_value = sum(
                     open_prices.get(t.ticker, t.entry_price) * t.quantity
                     for t in open_trades

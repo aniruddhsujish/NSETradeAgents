@@ -1,0 +1,141 @@
+{% extends "base.html" %} {% block title %}Overview{% endblock %} {% block
+content %}
+
+<!-- Headline stats -->
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+  <div class="bg-slate-900 rounded-xl p-5 border border-slate-800">
+    <p class="text-slate-500 text-xs uppercase tracking-widest mb-1">
+      Portfolio Value
+    </p>
+    <p class="text-2xl font-bold text-white">
+      ₹{{ "{:,.0f}".format(snapshot.total_value) if snapshot else "-"}}
+    </p>
+  </div>
+
+  <div class="bg-slate-900 rounded-xl p-5 border border-slate-800">
+    <p class="text-slate-500 text-xs uppercase tracking-widest mb-1">
+      Cash available
+    </p>
+    <p class="text-2xl font-bold text-white">
+      ₹{{ "{:,.0f}".format(snapshot.cash) if snapshot else "—" }}
+    </p>
+  </div>
+
+  <div class="bg-slate-900 rounded-xl p-5 border border-slate-800">
+    <p class="text-slate-500 text-xs uppercase tracking-widest mb-1">
+      Unrealised P&L
+    </p>
+    <p
+      class="text-2xl font-bold {% if snapshot and snapshot.unrealised_pnl > 0 %}text-emerald-400 {% elif snapshot and snapshot.unrealised_pnl < 0 %}text-red-400 {% else %}text-slate-400{% endif %}"
+    >
+      {% if snapshot %} {{ "+" if snapshot.unrealised_pnl > 0 }}₹{{
+      "{:,.0f}".format(snapshot.unrealised_pnl) }} {% else %}—{% endif %}
+    </p>
+  </div>
+
+  <div class="bg-slate-900 rounded-xl p-5 border border-slate-800">
+    <p class="text-slate-500 text-xs uppercase tracking-widest mb-1">
+      Realised P&L
+    </p>
+    <p
+      class="text-2xl font-bold {% if snapshot and snapshot.cumulative_pnl > 0 %}text-emerald-400 {% elif snapshot and snapshot.cumulative_pnl < 0 %}text-red-400 {% else %}text-slate-400{% endif %}"
+    >
+      {% if snapshot %} {{ "+" if snapshot.cumulative_pnl > 0 }}₹{{
+      "{:,.0f}".format(snapshot.cumulative_pnl) }} {% else %}—{% endif %}
+    </p>
+  </div>
+</div>
+
+<!-- Secondary stats row -->
+<div class="grid grid-cols-3 gap-4 mb-8">
+  <div class="bg-slate-900 rounded-xl p-5 border border-slate-800">
+    <p class="text-slate-500 text-xs uppercase tracking-widest mb-1">
+      Open Positions
+    </p>
+    <p class="text-2xl font-bold text-white">{{ open_count }}</p>
+  </div>
+
+  <div class="bg-slate-900 rounded-xl p-5 border border-slate-800">
+    <p class="text-slate-500 text-xs uppercase tracking-widest mb-1">
+      Invested
+    </p>
+    <p class="text-2xl font-bold text-white">
+      ₹{{ "{:,.0f}".format(snapshot.invested) if snapshot else "—" }}
+    </p>
+  </div>
+
+  <div class="bg-slate-900 rounded-xl p-5 border border-slate-800">
+    <p class="text-slate-500 text-xs uppercase tracking-widest mb-1">
+      Daily P&L
+    </p>
+    <p
+      class="text-2xl font-bold {% if snapshot and snapshot.daily_pnl > 0 %}text-emerald-400 {% elif snapshot and snapshot.daily_pnl < 0 %}text-red-400 {% else %}text-slate-400{% endif %}"
+    >
+      {% if snapshot %} {{ "+" if snapshot.daily_pnl > 0 }}₹{{
+      "{:,.0f}".format(snapshot.daily_pnl) }} {% else %}—{% endif %}
+    </p>
+  </div>
+</div>
+
+<!-- P&L Chart -->
+<div class="bg-slate-900 rounded-xl p-6 border border-slate-800">
+  <p class="text-slate-400 text-xs uppercase tracking-widest mb-4">
+    Portfolio Value Over Time
+  </p>
+  <canvas id="pnlChart" height="80"></canvas>
+</div>
+
+<script>
+  fetch("/api/snapshots")
+    .then((res) => res.json())
+    .then((data) => {
+      if (!data.length) return;
+      new Chart(document.getElementById("pnlChart"), {
+        type: "line",
+        data: {
+          labels: data.map((d) => d.time),
+          datasets: [
+            {
+              label: "Portfolio Value",
+              data: data.map((d) => d.total_value),
+              borderColor: "#34d399",
+              backgroundColor: "rgba(52, 211, 153, 0.05)",
+              borderWidth: 2,
+              pointRadius: 0,
+              fill: true,
+              tension: 0.3,
+            },
+            {
+              label: "Unrealised P&L",
+              data: data.map((d) => d.unrealised_pnl),
+              borderColor: "#60a5fa",
+              borderWidth: 1.5,
+              pointRadius: 0,
+              fill: false,
+              tension: 0.3,
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          plugins: {
+            legend: {
+              labels: { color: "#94a3b8", font: { family: "monospace" } },
+            },
+          },
+          scales: {
+            x: {
+              ticks: { color: "#475569", maxTicksLimit: 8 },
+              grid: { color: "#1e293b" },
+            },
+            y: {
+              ticks: { color: "#475569" },
+              grid: { color: "#1e293b" },
+            },
+          },
+        },
+      });
+    });
+</script>
+
+{% endblock %}

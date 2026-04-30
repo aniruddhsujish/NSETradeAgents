@@ -16,6 +16,7 @@ class Trade(Base):
     entry_value: Mapped[float]
     stop_loss: Mapped[float]
     take_profit: Mapped[float]
+    current_price: Mapped[Optional[float]] = mapped_column(nullable=True)
     status: Mapped[str] = mapped_column(String(10), default="open")  # open | closed
     close_price: Mapped[Optional[float]]
     close_reason: Mapped[Optional[str]] = mapped_column(
