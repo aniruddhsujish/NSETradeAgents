@@ -8,13 +8,14 @@ class TradingState(TypedDict):
     open_positions: int
 
     # Pre-fetched market data (loaded once before parallel agents)
-    ticker_df: Any          # pd.DataFrame — 12mo price history
+    ticker_df: Any  # pd.DataFrame — 12mo price history
     ticker_info: dict | None  # yf.Ticker(ticker).info
-    nifty_df: Any           # pd.DataFrame — Nifty 50 recent data
+    nifty_df: Any  # pd.DataFrame — Nifty 50 recent data
 
     # Derived / computed
     current_price: float
     market_context: dict | None
+    fundamental_result: dict | None
 
     # Agent outputs
     technical_signals: dict | None

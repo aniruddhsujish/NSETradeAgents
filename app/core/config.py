@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     max_position_pct: float = 0.25
     stop_loss_pct: float = 0.07
     take_profit_pct: float = 0.18
-    min_confidence: float = 0.70
+    min_confidence: float = 0.75
 
     # Screener
     min_volume_ratio: float = 2.0

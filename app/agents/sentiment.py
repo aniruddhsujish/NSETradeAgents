@@ -11,12 +11,8 @@ from app.core.config import settings
 logger = structlog.get_logger()
 
 # ── LLMs ─────────────────────────────────────────────────────────────────────
-research_llm = ChatAnthropic(
-    model=settings.llm_model_fast, max_tokens=1000, api_key=settings.anthropic_api_key
-)
-scoring_llm = ChatAnthropic(
-    model=settings.llm_model_fast, max_tokens=600, api_key=settings.anthropic_api_key
-)
+research_llm = ChatAnthropic(model=settings.llm_model_fast, max_tokens=1000, api_key=settings.anthropic_api_key)  # type: ignore
+scoring_llm = ChatAnthropic(model=settings.llm_model_fast, max_tokens=600, temperature=0, api_key=settings.anthropic_api_key)  # type: ignore
 
 # ── Tavily search tool ────────────────────────────────────────────────────────
 search_tool = TavilySearch(
@@ -33,6 +29,8 @@ search_tool = TavilySearch(
         "reuters.com",
         "bseindia.com",
         "nseindia.com",
+        "twitter.com",
+        "reddit.com",
     ],
     tavily_api_key=settings.tavily_api_key,
 )
@@ -140,7 +138,7 @@ SIGNAL: BUY if score > 30, SELL if score < -30, HOLD otherwise.
 Cite the specific finding driving your score in the summary."""
 
     try:
-        result = scoring_chain.invoke([HumanMessage(content=scoring_prompt)])
+        result: SentimentSignal = scoring_chain.invoke([HumanMessage(content=scoring_prompt)])  # type: ignore[assignment]
         signal = result.signal.upper()
         if signal not in ("BUY", "HOLD", "SELL"):
             signal = "HOLD"

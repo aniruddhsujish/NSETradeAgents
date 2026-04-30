@@ -10,9 +10,7 @@ from app.utils.indicators import compute_indicators
 from app.utils.prompt_helpers import format_market_context
 
 logger = structlog.get_logger()
-llm = ChatAnthropic(
-    model=settings.llm_model_fast, max_tokens=500, api_key=settings.anthropic_api_key
-)
+llm = ChatAnthropic(model=settings.llm_model_fast, max_tokens=500, temperature=0, api_key=settings.anthropic_api_key)  # type: ignore
 
 
 class TechnicalSignal(BaseModel):
@@ -83,7 +81,7 @@ Analyse these indicators for a swing trade. Follow this priority order:
 STRENGTH scale: 80-100 = high conviction, 60-79 = moderate, below 60 = weak (prefer HOLD)."""
 
     try:
-        result = chain.invoke([HumanMessage(content=prompt)])
+        result: TechnicalSignal = chain.invoke([HumanMessage(content=prompt)])  # type: ignore[assignment]
         signal = result.signal.upper()
         strength = result.strength
         summary = result.summary

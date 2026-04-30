@@ -3,6 +3,7 @@ import structlog
 import yfinance as yf
 from langgraph.graph import StateGraph, START, END
 from app.graph.state import TradingState
+from app.agents.fundamental import run_fundamental_check
 from app.agents.market_context import fetch_market_context
 from app.agents.technical import run_technical_analysis
 from app.agents.sentiment import run_sentiment_analysis
@@ -41,8 +42,17 @@ def fetch_data_node(state: TradingState) -> dict:
         logger.warning("nifty_fetch_failed", error=str(e))
         nifty_df = None
 
-    logger.info("fetch_data_done", ticker=ticker, rows=len(ticker_df) if ticker_df is not None else 0)
+    logger.info(
+        "fetch_data_done",
+        ticker=ticker,
+        rows=len(ticker_df) if ticker_df is not None else 0,
+    )
     return {"ticker_df": ticker_df, "ticker_info": ticker_info, "nifty_df": nifty_df}
+
+
+def fundamental_node(state: TradingState) -> dict:
+    result = run_fundamental_check(state["ticker"], state.get("ticker_info"))
+    return {"fundamental_result": result}
 
 
 def market_context_node(state: TradingState) -> dict:
@@ -89,6 +99,7 @@ def risk_node(state: TradingState) -> dict:
 
 
 def decision_node(state: TradingState) -> dict:
+    fundamental = state.get("fundamental_result") or {}
     decision = run_decision(
         ticker=state["ticker"],
         current_price=state["current_price"],
@@ -96,16 +107,20 @@ def decision_node(state: TradingState) -> dict:
         sentiment=state.get("sentiment_data") or {},
         risk=state.get("risk_result") or {},
         market_context=state.get("market_context"),
+        fundamental=fundamental,
     )
     return {"decision": decision}
 
 
 def blocked_node(state: TradingState) -> dict:
+    fundamental = state.get("fundamental_result") or {}
     risk = state.get("risk_result") or {}
     decision = state.get("decision") or {}
-    reasons = risk.get("block_reasons") or [
-        f"Decision: {decision.get('action')} ({decision.get('confidence')}% confidence)"
-    ]
+    reasons = (
+        fundamental.get("block_reasons")
+        or risk.get("block_reasons")
+        or [f"Decision: {decision.get('action')} ({decision.get('confidence')}% confidence)"]
+    )
     logger.info("trade_blocked", ticker=state["ticker"], reasons=reasons)
     return {
         "trade_result": {"action": "BLOCKED", "executed": False, "reasons": reasons}
@@ -155,6 +170,13 @@ def execute_node(state: TradingState) -> dict:
     }
 
 
+def route_after_fundamental(state: TradingState) -> list[str]:
+    result = state.get("fundamental_result") or {}
+    if not result.get("approved", True):
+        return ["blocked"]
+    return ["market_context", "technical", "sentiment"]
+
+
 def route_after_risk(state: TradingState) -> str:
     """If risk blocked, skip decision entirely"""
     risk = state.get("risk_result") or {}
@@ -178,6 +200,7 @@ def build_graph():
 
     # Register nodes
     graph.add_node("fetch_data", fetch_data_node)
+    graph.add_node("fundamental", fundamental_node)
     graph.add_node("market_context", market_context_node)
     graph.add_node("technical", technical_node)
     graph.add_node("sentiment", sentiment_node)
@@ -187,13 +210,12 @@ def build_graph():
     graph.add_node("blocked", blocked_node)
     graph.add_node("execute", execute_node)
 
-    # Fetch all market data once before parallel agents
+    # Fetch all market data once
     graph.add_edge(START, "fetch_data")
 
-    # Fan-out: fetch_data -> all three agents in parallel
-    graph.add_edge("fetch_data", "market_context")
-    graph.add_edge("fetch_data", "technical")
-    graph.add_edge("fetch_data", "sentiment")
+    # Fan-out: fundamental conditionally fans out or blocks
+    graph.add_edge("fetch_data", "fundamental")
+    graph.add_conditional_edges("fundamental", route_after_fundamental)
 
     # Fan-in: all three -> fetch_price
     graph.add_edge("market_context", "fetch_price")
@@ -231,6 +253,7 @@ def analyze_ticker(ticker: str, portfolio_cash: float, open_positions: int) -> d
         "nifty_df": None,
         "current_price": 0.0,
         "market_context": None,
+        "fundamental_result": None,
         "technical_signals": None,
         "sentiment_data": None,
         "risk_result": None,

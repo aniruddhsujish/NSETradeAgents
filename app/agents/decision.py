@@ -6,11 +6,7 @@ from app.core.config import settings
 from app.utils.prompt_helpers import format_market_context
 
 logger = structlog.get_logger()
-llm = ChatAnthropic(
-    model=settings.llm_model_smart,
-    max_tokens=600,
-    api_key=settings.anthropic_api_key,
-)
+llm = ChatAnthropic(model=settings.llm_model_smart, max_tokens=600, temperature=0, api_key=settings.anthropic_api_key)  # type: ignore
 
 
 class DecisionSignal(BaseModel):
@@ -31,10 +27,22 @@ def run_decision(
     sentiment: dict,
     risk: dict,
     market_context: dict | None = None,
+    fundamental: dict | None = None,
 ) -> dict:
     logger.info("decision_start", ticker=ticker)
 
     mkt_block = format_market_context(market_context)
+
+    fund = fundamental or {}
+    fund_block = (
+        f"""
+    --- FUNDAMENTAL CHECK ---
+    Approved: {fund.get('approved', True)} | {fund.get('notes', 'N/A')}
+    Flags: {fund.get('block_reasons') or 'None'}
+    """
+        if fundamental
+        else ""
+    )
 
     prompt = f"""You are a senior portfolio manager at a quantitative hedge fund making a final swing trade decision for an NSE-listed smallcap/midcap stock. Two specialist Haiku models have completed
     technical and sentiment analysis. your role is NOT to repeat their findings - it is to add a layer of judgement they cannot: cross-signal consistency, entry timing, and risk-adjusted conviction.
@@ -52,6 +60,7 @@ def run_decision(
     --- RISK ASSESSMENT ---
     Approved: {risk.get('approved')} | {risk.get('notes')}
     Block reasons: {risk.get('block_reasons') or 'None'}
+    {fund_block}
 
     Apply this decision framework in order:
 
@@ -84,7 +93,7 @@ def run_decision(
     Your reasoning MUST cite: (a) which signal drove the decision, (b) what the key risk is, (c) why NOW is or isn't a good entry."""
 
     try:
-        result = chain.invoke([HumanMessage(content=prompt)])
+        result: DecisionSignal = chain.invoke([HumanMessage(content=prompt)])  # type: ignore[assignment]
         action = result.action.upper()
         confidence = result.confidence
         reasoning = result.reasoning
