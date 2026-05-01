@@ -1,6 +1,6 @@
-# Swing Trade Bot
+# NSETradeAgents
 
-Multi-agent AI system for swing trading NSE smallcap and midcap stocks. Targets 1-4 week holds with a 2.57× risk/reward ratio (7% stop, 18% target). Fully automated — morning discovery at 9:30 AM IST, 15-minute position monitoring during market hours.
+Multi-agent AI system for swing trading NSE smallcap and midcap stocks. Targets 1-4 week holds with a 7% stop loss and 18% take profit. Fully automated — morning discovery at 9:30 AM IST, 15-minute position monitoring during market hours.
 
 ---
 
@@ -196,7 +196,7 @@ Applies a 6-step framework in strict order:
 
 **Stop loss:** Fixed 7% below entry price. Reflects a balance between giving the trade room to breathe versus containing downside. At 7%, a full 4-position portfolio losing all stops simultaneously loses 7% of total capital (₹7,000 on ₹1,00,000).
 
-**Take profit:** Fixed 18% above entry price. At 18% target and 7% stop, the risk/reward is 2.57×. This means the strategy is profitable at a win rate above ~28% in theory, though in practice a higher win rate is expected given the entry criteria.
+**Take profit:** Fixed 18% above entry price. The target risk/reward ratio is 2.57× (18÷7) — meaning the strategy is theoretically profitable above a ~28% win rate. Whether this is achieved in practice is what the forward test and eval benchmark will determine.
 
 **Holding period:** 1-4 weeks. The 15-minute position monitor auto-closes positions when stop or target is hit intraday. No overnight risk management beyond the stop loss.
 
