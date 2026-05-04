@@ -7,17 +7,17 @@ logger = structlog.get_logger()
 # Maps yfinance sector names → NSE sector index ticker
 # yfinance returns names like "Technology", "Financial Services" — not "NIFTY IT"
 SECTOR_MAP = {
-    "Technology":             "^CNXIT",
-    "Financial Services":     "^NSEBANK",
-    "Healthcare":             "^CNXPHARMA",
-    "Consumer Cyclical":      "^CNXAUTO",
-    "Consumer Defensive":     "^CNXFMCG",
-    "Basic Materials":        "^CNXMETAL",
-    "Real Estate":            "^CNXREALTY",
-    "Energy":                 "^CNXENERGY",
-    "Industrials":            "^CNXINFRA",
+    "Technology": "^CNXIT",
+    "Financial Services": "^NSEBANK",
+    "Healthcare": "^CNXPHARMA",
+    "Consumer Cyclical": "^CNXAUTO",
+    "Consumer Defensive": "^CNXFMCG",
+    "Basic Materials": "^CNXMETAL",
+    "Real Estate": "^CNXREALTY",
+    "Energy": "^CNXENERGY",
+    "Industrials": "^CNXINFRA",
     "Communication Services": "^CNXMEDIA",
-    "Utilities":              "^CNXENERGY",  # closest proxy
+    "Utilities": "^CNXENERGY",  # closest proxy
 }
 
 
@@ -44,6 +44,7 @@ def fetch_market_context(
     ticker_df: pd.DataFrame | None = None,
     ticker_info: dict | None = None,
     nifty_df: pd.DataFrame | None = None,
+    sector_dfs: dict[str, pd.DataFrame] | None = None,
 ) -> dict:
     """
     Collect market-wide and stock-level context
@@ -62,16 +63,26 @@ def fetch_market_context(
 
     # --- 1. Nifty 50 — use pre-fetched df if available --------------------------------
     try:
-        nifty_raw = nifty_df if nifty_df is not None else yf.download(
-            "^NSEI", period="10d", interval="1d", progress=False, auto_adjust=True
+        nifty_raw = (
+            nifty_df
+            if nifty_df is not None
+            else yf.download(
+                "^NSEI", period="10d", interval="1d", progress=False, auto_adjust=True
+            )
         )
         nifty_close = nifty_raw["Close"].squeeze()
         nifty_day_pct = float(
             (nifty_close.iloc[-1] - nifty_close.iloc[-2]) / nifty_close.iloc[-2] * 100
         )
-        nifty_5d_pct = float(
-            (nifty_close.iloc[-1] - nifty_close.iloc[-6]) / nifty_close.iloc[-6] * 100
-        ) if len(nifty_close) >= 6 else 0.0
+        nifty_5d_pct = (
+            float(
+                (nifty_close.iloc[-1] - nifty_close.iloc[-6])
+                / nifty_close.iloc[-6]
+                * 100
+            )
+            if len(nifty_close) >= 6
+            else 0.0
+        )
     except Exception as e:
         logger.warning("nifty_fetch_failed", error=str(e))
         nifty_day_pct = 0.0
@@ -94,7 +105,8 @@ def fetch_market_context(
         # Direct lookup — keys match yfinance sector names exactly
         matched_index = SECTOR_MAP.get(sector)
         if matched_index:
-            sector_day_pct = _day_change_pct(matched_index)
+            injected = sector_dfs.get(matched_index) if sector_dfs else None
+            sector_day_pct = _day_change_pct(matched_index, df=injected)
     except Exception as e:
         logger.warning("sector_fetch_failed", ticker=ticker, error=str(e))
 
@@ -102,8 +114,12 @@ def fetch_market_context(
     pct_from_52w_high = None
     pct_from_52w_low = None
     try:
-        hist = ticker_df if ticker_df is not None else yf.download(
-            ticker, period="52wk", interval="1d", progress=False, auto_adjust=True
+        hist = (
+            ticker_df
+            if ticker_df is not None
+            else yf.download(
+                ticker, period="52wk", interval="1d", progress=False, auto_adjust=True
+            )
         )
 
         if hist is not None and len(hist) > 0:

@@ -6,7 +6,6 @@ from app.core.config import settings
 from app.utils.prompt_helpers import format_market_context
 
 logger = structlog.get_logger()
-llm = ChatAnthropic(model=settings.llm_model_smart, max_tokens=600, temperature=0, api_key=settings.anthropic_api_key)  # type: ignore
 
 
 class DecisionSignal(BaseModel):
@@ -17,9 +16,6 @@ class DecisionSignal(BaseModel):
     )
 
 
-chain = llm.with_structured_output(DecisionSignal)
-
-
 def run_decision(
     ticker: str,
     current_price: float,
@@ -28,7 +24,16 @@ def run_decision(
     risk: dict,
     market_context: dict | None = None,
     fundamental: dict | None = None,
+    model: str | None = None,
 ) -> dict:
+
+    _llm = ChatAnthropic(
+        model=model or settings.llm_model_smart,
+        max_tokens=600,
+        temperature=0,
+        api_key=settings.anthropic_api_key,
+    )  # type: ignore
+    chain = _llm.with_structured_output(DecisionSignal)
     logger.info("decision_start", ticker=ticker)
 
     mkt_block = format_market_context(market_context)
