@@ -12,6 +12,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from app.core.logging import setup_logging
 from app.core.database import init_db
+from app.core.config import settings
 from app.portfolio.simulator import simulator
 
 setup_logging()
@@ -128,6 +129,15 @@ def review_positions() -> None:
                 reason="tp",
             )
             simulator.close_trade(ticker, current_price, reason="tp")
+        elif (datetime.now() - position["opened_at"]).days >= settings.max_hold_days:
+            logger.info(
+                "position_review_timeout",
+                ticker=ticker,
+                days_held=(datetime.now() - position["opened_at"]).days,
+                current_price=current_price,
+                reason="timeout",
+            )
+            simulator.close_trade(ticker, current_price, reason="timeout")
         else:
             logger.info(
                 "position_review_hold",
