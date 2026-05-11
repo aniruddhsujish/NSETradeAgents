@@ -105,9 +105,23 @@ cp .env.example .env        # add ANTHROPIC_API_KEY and TAVILY_API_KEY
 
 **Run the full app** (dashboard + scheduler):
 ```bash
-uvicorn app.api.routes:app --reload
+caffeinate -i uvicorn app.api.routes:app --reload --reload-dir app
 ```
 Open `http://localhost:8000`. The scheduler starts automatically — morning scan at 9:30 AM IST weekdays, position review every 15 minutes.
+
+**Run tests:**
+```bash
+pytest tests/ -v
+```
+
+| File | Tests | Coverage |
+|---|---|---|
+| `test_risk.py` | 6 | All 3 hard gates, position sizing math, boundary conditions |
+| `test_filters.py` | 6 | All 7 screener filters, ranking order, yfinance mocked |
+| `test_fundamental.py` | 7 | Market cap, D/E, ROE, sector exemptions, flags vs blocks |
+| `test_simulator.py` | 6 | Trade lifecycle, duplicate guard, cash check, P&L math |
+
+---
 
 **One-off scan** (testing only):
 ```bash
