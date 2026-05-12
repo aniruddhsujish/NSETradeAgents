@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     api_port: int = 8000
 
     # Risk
-    max_positions: int = 4
+    max_positions: int = 3
     max_position_pct: float = 0.25
     stop_loss_pct: float = 0.07
     take_profit_pct: float = 0.18

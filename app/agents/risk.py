@@ -11,6 +11,7 @@ def run_risk_check(
     open_positions: int,
     technical_signal: str,
     sentiment_signal: str,
+    atr_pct: float | None = None,
 ) -> dict:
     logger.info("risk_start", ticker=ticker, price=current_price)
 
@@ -67,9 +68,13 @@ def run_risk_check(
     actual_position_value = quantity * current_price
 
     # Stop loss and take profit
-    stop_loss = round(current_price * (1 - settings.stop_loss_pct), 2)
+    if atr_pct is not None and atr_pct > 0:
+        stop_pct = min(max(2.5 * atr_pct / 100, 0.05), 0.12)
+    else:
+        stop_pct = settings.stop_loss_pct
+    stop_loss = round(current_price * (1 - stop_pct), 2)
     take_profit = round(current_price * (1 + settings.take_profit_pct), 2)
-    risk_reward = round(settings.take_profit_pct / settings.stop_loss_pct, 2)
+    risk_reward = round(settings.take_profit_pct / stop_pct, 2)
 
     notes = (
         f"Position: ₹{actual_position_value:.0f} ({actual_position_value/settings.starting_capital*100:.1f}% of portfolio) | "

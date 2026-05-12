@@ -87,6 +87,7 @@ def sentiment_node(state: TradingState) -> dict:
 def risk_node(state: TradingState) -> dict:
     tech = state.get("technical_signals") or {}
     sent = state.get("sentiment_data") or {}
+    atr_pct = (tech.get("indicators") or {}).get("atr_pct")
     result = run_risk_check(
         ticker=state["ticker"],
         current_price=state["current_price"],
@@ -94,6 +95,7 @@ def risk_node(state: TradingState) -> dict:
         open_positions=state["open_positions"],
         technical_signal=tech.get("signal", "HOLD"),
         sentiment_signal=sent.get("signal", "HOLD"),
+        atr_pct=atr_pct,
     )
     return {"risk_result": result}
 
@@ -119,7 +121,9 @@ def blocked_node(state: TradingState) -> dict:
     reasons = (
         fundamental.get("block_reasons")
         or risk.get("block_reasons")
-        or [f"Decision: {decision.get('action')} ({decision.get('confidence')}% confidence)"]
+        or [
+            f"Decision: {decision.get('action')} ({decision.get('confidence')}% confidence)"
+        ]
     )
     logger.info("trade_blocked", ticker=state["ticker"], reasons=reasons)
     return {

@@ -22,6 +22,23 @@ def screen(tickers: list[str], config: dict) -> list[dict]:
         rsi_min               float  e.g. 55.0
         rsi_max               float  e.g. 70.0
     """
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            _nifty = yf.download(
+                "^NSEI", period="60d", interval="1d", progress=False, auto_adjust=True
+            )
+        if not _nifty.empty and len(_nifty) >= 50:
+            _close = _nifty["Close"].squeeze()
+            if float(_close.iloc[-1]) < float(_close.tail(50).mean()):
+                logger.info(
+                    "screener_regime_blocked",
+                    reason="Nifty50 below 50d SMA - skipping new entries",
+                )
+                return []
+    except Exception as e:
+        logger.warning("regime_check_failed", error=str(e))
+
     logger.info("screener_start", total=len(tickers))
 
     if not tickers:
@@ -114,24 +131,26 @@ def screen(tickers: list[str], config: dict) -> list[dict]:
                 continue
 
             # Passed — compute ranking score (all components normalised to [0, 1])
-            vol_norm      = min(ind["volume_ratio"] / 5.0, 1.0)
+            vol_norm = min(ind["volume_ratio"] / 5.0, 1.0)
             momentum_norm = min(max(ind["momentum_5d"], -15), 15) / 15
-            atr_norm      = min(ind["atr_pct"] / 5.0, 1.0)
+            atr_norm = min(ind["atr_pct"] / 5.0, 1.0)
             score = (vol_norm * 0.40) + (momentum_norm * 0.35) + (atr_norm * 0.25)
 
-            candidates.append({
-                "ticker":          ticker,
-                "current_price":   ind["current_price"],
-                "volume_ratio":    ind["volume_ratio"],
-                "avg_daily_value": ind["avg_daily_value"],
-                "day_change_pct":  ind["day_change_pct"],
-                "momentum_5d":     ind["momentum_5d"],
-                "rsi":             ind["rsi"],
-                "atr_pct":         ind["atr_pct"],
-                "sma50":           ind["sma50"],
-                "sma200":          ind["sma200"],
-                "score":           round(score, 3),
-            })
+            candidates.append(
+                {
+                    "ticker": ticker,
+                    "current_price": ind["current_price"],
+                    "volume_ratio": ind["volume_ratio"],
+                    "avg_daily_value": ind["avg_daily_value"],
+                    "day_change_pct": ind["day_change_pct"],
+                    "momentum_5d": ind["momentum_5d"],
+                    "rsi": ind["rsi"],
+                    "atr_pct": ind["atr_pct"],
+                    "sma50": ind["sma50"],
+                    "sma200": ind["sma200"],
+                    "score": round(score, 3),
+                }
+            )
             counts["passed"] += 1
 
         except Exception as e:

@@ -78,7 +78,11 @@ Analyse these indicators for a swing trade. Follow this priority order:
 4. VOLUME -- volume ratio > 2x confirms conviction behind the move
 5. MARKET CONTEXT -- bearish Nifty or weak sector reduces conviction; factor into STRENGTH, not necessarily SIGNAL
 
-STRENGTH scale: 80-100 = high conviction, 60-79 = moderate, below 60 = weak (prefer HOLD)."""
+STRENGTH reflects how cleanly the setup meets swing trade criteria —
+consider RSI position within the ideal zone, MACD momentum direction,
+volume conviction, and how extended the move already is.
+90-100: textbook setup, 70-89: solid with minor reservations,
+50-69: marginal, below 50: weak (prefer HOLD)."""
 
     try:
         result: TechnicalSignal = chain.invoke([HumanMessage(content=prompt)])  # type: ignore[assignment]

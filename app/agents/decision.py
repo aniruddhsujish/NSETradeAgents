@@ -74,7 +74,7 @@ def run_decision(
     2. SIGNAL ALIGNMENT - assess how well signals agree:
         - Both BUY -> string case, proceed to conviction scoring
         - Technical BUY + Sentiment HOLD -> acceptable, wight technical more (price action leads news in swing trade)
-        - Technical BUY + Sentiment SELL -> high conflict, require strength > 75 to proceed, otherwise HOLD
+        - Technical BUY + Sentiment SELL -> high conflict, require high strength to proceed, otherwise HOLD
         - Technical HOLd or SELL -> output HOLD regardless of sentiment
     
     3. ENTRY TIMING - even if signals align, ask: is this a good entry point RIGHT NOW?
@@ -88,12 +88,12 @@ def run_decision(
         - Bearish sector: reduce confidence by 10 points
         - Stock showing relative strength against weak market: add 10 points (strong signal)
 
-    5. CONVICTION THRESHOLD - only output BUY if final confidence >= {settings.min_confidence * 100:.0f}.
-        A marginal BUY at 68% confidence is worse than a HOLD - missed trades cost nothing, bad trades cost capital.
+    5. CONVICTION THRESHOLD - only output BUY if you have genuine conviction.
+        A marginal BUY is worse than a HOLD - missed trades cost nothing, bad trades cost capital.
 
     6. SKEPTICISM CHECK - if everything looks perfect (all BUY, high strength, positive sentiment), be slightly skeptical. Markets rarely offer free money. Ask: what could go wrong? Factor that into reasoning.
 
-    CONFIDENCE scale: 85-100 = very high conviction, 70-84 = moderate, below 70 = do not trade.
+    CONFIDENCE scale: 90-100 = very high conviction (rare), 75-89 = high, 60-74 = moderate, below 60 = low conviction.
 
     Your reasoning MUST cite: (a) which signal drove the decision, (b) what the key risk is, (c) why NOW is or isn't a good entry."""
 
