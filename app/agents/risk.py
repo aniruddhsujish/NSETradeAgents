@@ -69,7 +69,9 @@ def run_risk_check(
 
     # Stop loss and take profit
     if atr_pct is not None and atr_pct > 0:
-        stop_pct = min(max(2.5 * atr_pct / 100, 0.05), 0.12)
+        stop_pct = min(
+            max(2.5 * atr_pct / 100, 0.05), 0.10
+        )  # 2.5x ATR, bounded between 5% and 10%
     else:
         stop_pct = settings.stop_loss_pct
     stop_loss = round(current_price * (1 - stop_pct), 2)

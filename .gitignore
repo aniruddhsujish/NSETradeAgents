@@ -3,6 +3,7 @@
 
 # Python
 .venv/
+venv/
 .python-version
 __pycache__/
 **/__pycache__/
