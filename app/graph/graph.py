@@ -10,6 +10,7 @@ from app.agents.sentiment import run_sentiment_analysis
 from app.agents.risk import run_risk_check
 from app.agents.decision import run_decision
 from app.core.config import settings
+from app.utils.scoring import compute_confidence
 
 logger = structlog.get_logger()
 
@@ -36,7 +37,7 @@ def fetch_data_node(state: TradingState) -> dict:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             nifty_df = yf.download(
-                "^NSEI", period="10d", interval="1d", progress=False, auto_adjust=True
+                "^NSEI", period="60d", interval="1d", progress=False, auto_adjust=True
             )
     except Exception as e:
         logger.warning("nifty_fetch_failed", error=str(e))
@@ -111,6 +112,13 @@ def decision_node(state: TradingState) -> dict:
         market_context=state.get("market_context"),
         fundamental=fundamental,
     )
+    if decision.get("action") == "BUY":
+        decision["confidence"] = compute_confidence(
+            decision, state.get("market_context")
+        )
+    else:
+        decision["confidence"] = 0
+
     return {"decision": decision}
 
 

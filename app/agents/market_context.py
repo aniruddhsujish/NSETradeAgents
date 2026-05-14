@@ -67,7 +67,7 @@ def fetch_market_context(
             nifty_df
             if nifty_df is not None
             else yf.download(
-                "^NSEI", period="10d", interval="1d", progress=False, auto_adjust=True
+                "^NSEI", period="60d", interval="1d", progress=False, auto_adjust=True
             )
         )
         nifty_close = nifty_raw["Close"].squeeze()
@@ -142,6 +142,31 @@ def fetch_market_context(
         else:
             divergence_note = "Stock moving in line with sector"
 
+    # --- 5. SMA20 trend position - early correction signal --------------------------
+    trend_label = "unknown"
+    try:
+        if len(nifty_close) >= 20:
+            nifty_current = float(nifty_close.iloc[-1])
+            above_sma20 = nifty_current > float(nifty_close.tail(20).mean())
+            if len(nifty_close) >= 50:
+                above_sma50 = nifty_current > float(nifty_close.tail(50).mean())
+                if above_sma50 and above_sma20:
+                    trend_label = "above both SMA20 and SMA50 - healthy uptrend"
+                elif above_sma50 and not above_sma20:
+                    trend_label = (
+                        "above SMA50 but below SMA20 - early correction developing"
+                    )
+                else:
+                    trend_label = "below SMA50 - sustained downtrend"  # Should be blocked by regime gate, but good to note
+            else:
+                trend_label = (
+                    "above SMA20"
+                    if above_sma20
+                    else "below SMA20 - short-term weakness"
+                )
+    except Exception as e:
+        logger.warning("sma20_compute_failed", error=str(e))
+
     context = {
         "nifty_day_pct": round(nifty_day_pct, 2),
         "nifty_5d_pct": round(nifty_5d_pct, 2),
@@ -153,6 +178,7 @@ def fetch_market_context(
         "pct_from_52w_high": pct_from_52w_high,
         "pct_from_52w_low": pct_from_52w_low,
         "divergence_note": divergence_note,
+        "trend_label": trend_label,
     }
     logger.info(
         "market_context_done",
