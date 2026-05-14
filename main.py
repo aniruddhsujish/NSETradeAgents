@@ -1,4 +1,5 @@
 import structlog
+from app import portfolio
 from app.core.logging import setup_logging
 from app.core.database import init_db
 from app.core.config import settings
@@ -34,6 +35,11 @@ def run_scan():
         logger.info("scan_no_candidates")
         return
 
+    # Circuit breaker - pause new entires if portfolio down >8% from 30-day peak
+    if simulator.is_circuit_breaker_active():
+        logger.info("scan_circuit_breaker_triggered")
+        return
+
     logger.info("scan_candidates_found", count=len(candidates))
 
     for candidate in candidates:
@@ -52,11 +58,13 @@ def run_scan():
 
         logger.info("scan_analysing", ticker=ticker, score=candidate["score"])
 
+        open_position_sectors = [p["sector"] for p in portfolio["positions"]]
         try:
             final_state = analyze_ticker(
                 ticker=ticker,
                 portfolio_cash=portfolio["cash"],
                 open_positions=portfolio["open_positions"],
+                open_position_sectors=open_position_sectors,
             )
         except Exception as e:
             logger.error("scan_ticker_failed", ticker=ticker, error=str(e))

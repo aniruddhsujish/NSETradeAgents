@@ -12,6 +12,8 @@ def run_risk_check(
     technical_signal: str,
     sentiment_signal: str,
     atr_pct: float | None = None,
+    ticker_sector: str = "Unknown",
+    open_position_sectors: list[str] | None = None,
 ) -> dict:
     logger.info("risk_start", ticker=ticker, price=current_price)
 
@@ -50,6 +52,14 @@ def run_risk_check(
         block_reasons.append(
             f"position size too small to be meaningful (₹{max_position_value:.0f} < ₹5,000)"
         )
+
+    # Gate 4: max 2 positions per sector to ensure diversification
+    if ticker_sector != "Unknown" and open_position_sectors:
+        sector_count = open_position_sectors.count(ticker_sector)
+        if sector_count >= 2:
+            block_reasons.append(
+                f"sector concentration limit reached ({ticker_sector}: {sector_count}/2)"
+            )
 
     if block_reasons:
         logger.info("risk_blocked", ticker=ticker, reasons=block_reasons)

@@ -6,6 +6,7 @@ class TradingState(TypedDict):
     ticker: str
     portfolio_cash: float
     open_positions: int
+    open_position_sectors: list[str]
 
     # Pre-fetched market data (loaded once before parallel agents)
     ticker_df: Any  # pd.DataFrame — 12mo price history

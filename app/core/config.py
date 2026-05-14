@@ -39,8 +39,8 @@ class Settings(BaseSettings):
     max_day_change_pct: float = 8.0
     min_price: float = 100.0
     min_atr_pct: float = 1.5
-    rsi_min: float = 55.0
-    rsi_max: float = 70.0
+    rsi_min: float = 58.0
+    rsi_max: float = 67.0
 
 
 settings: Settings = Settings()

@@ -35,6 +35,7 @@ class PortfolioSimulator:
                     "stop_loss": t.stop_loss,
                     "take_profit": t.take_profit,
                     "opened_at": t.opened_at,
+                    "sector": t.sector or "Unknown",
                 }
                 for t in open_trades
             ]
@@ -77,6 +78,7 @@ class PortfolioSimulator:
 
             trade = Trade(
                 ticker=ticker,
+                sector=trade_result.get("sector", "Unknown"),
                 entry_price=trade_result["price"],
                 quantity=trade_result["quantity"],
                 entry_value=entry_value,
@@ -198,6 +200,25 @@ class PortfolioSimulator:
                 cumulative_pnl=snapshot.cumulative_pnl,
             )
             return snapshot
+
+    def is_circuit_breaker_active(
+        self, days: int = 30, threshold: float = 0.08
+    ) -> bool:
+        from datetime import timedelta
+
+        with get_db() as db:
+            cutoff = datetime.now() - timedelta(days=days)
+            snapshots = (
+                db.query(PortfolioSnapshot)
+                .filter(PortfolioSnapshot.snapshot_at >= cutoff)
+                .order_by(PortfolioSnapshot.snapshot_at.desc())
+                .all()
+            )
+            if len(snapshots) < 2:
+                return False
+            peak = max(s.total_value for s in snapshots)
+            current = snapshots[0].total_value
+            return current < peak * (1 - threshold)
 
 
 simulator = PortfolioSimulator()

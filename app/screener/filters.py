@@ -68,6 +68,7 @@ def screen(tickers: list[str], config: dict) -> list[dict]:
         "volume": 0,
         "rsi": 0,
         "passed": 0,
+        "momentum": 0,
     }
 
     for ticker in tickers:
@@ -117,17 +118,25 @@ def screen(tickers: list[str], config: dict) -> list[dict]:
                 counts["day_change"] += 1
                 continue
 
-            # Filter 6: unusual volume
+            # Filter 6: unusual volume on an up day
             if ind["volume_ratio"] < config["min_volume_ratio"]:
                 counts["volume"] += 1
                 continue
             if ind["today_vol"] < config["min_volume_shares"]:
                 counts["volume"] += 1
                 continue
+            if ind["day_change_pct"] <= 0.5:
+                counts["volume"] += 1
+                continue
 
             # Filter 7: RSI in tradeable range
             if not (config["rsi_min"] <= ind["rsi"] <= config["rsi_max"]):
                 counts["rsi"] += 1
+                continue
+
+            # Filter 8: minimum 5-day momentum
+            if ind["momentum_5d"] < 2.0:
+                counts["momentum"] += 1
                 continue
 
             # Passed — compute ranking score (all components normalised to [0, 1])

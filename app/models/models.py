@@ -28,6 +28,7 @@ class Trade(Base):
     reasoning: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     technical_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     sentiment_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    sector: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     opened_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime, server_default=func.now()
     )

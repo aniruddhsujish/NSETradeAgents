@@ -10,8 +10,8 @@ CONFIG = {
     "max_day_change_pct": 8.0,
     "min_volume_ratio": 2.0,
     "min_volume_shares": 50000,
-    "rsi_min": 55.0,
-    "rsi_max": 70.0,
+    "rsi_min": 58.0,
+    "rsi_max": 67.0,
 }
 
 # Indicators that pass all 7 filters
@@ -117,7 +117,7 @@ def test_ranking_order():
     low_score = {
         **GOOD_INDICATORS,
         "volume_ratio": 2.0,
-        "momentum_5d": 1.0,
+        "momentum_5d": 2.5,
         "atr_pct": 1.5,
     }
 

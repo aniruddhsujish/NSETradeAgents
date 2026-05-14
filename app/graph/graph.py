@@ -88,6 +88,7 @@ def sentiment_node(state: TradingState) -> dict:
 def risk_node(state: TradingState) -> dict:
     tech = state.get("technical_signals") or {}
     sent = state.get("sentiment_data") or {}
+    ctx = state.get("market_context") or {}
     atr_pct = (tech.get("indicators") or {}).get("atr_pct")
     result = run_risk_check(
         ticker=state["ticker"],
@@ -97,6 +98,8 @@ def risk_node(state: TradingState) -> dict:
         technical_signal=tech.get("signal", "HOLD"),
         sentiment_signal=sent.get("signal", "HOLD"),
         atr_pct=atr_pct,
+        ticker_sector=ctx.get("sector", "Unknown"),
+        open_position_sectors=state.get("open_position_sectors") or [],
     )
     return {"risk_result": result}
 
@@ -150,6 +153,7 @@ def fetch_price_node(state: TradingState) -> dict:
 def execute_node(state: TradingState) -> dict:
     decision = state.get("decision") or {}
     risk = state.get("risk_result") or {}
+    market_ctx = state.get("market_context") or {}
     ticker = state["ticker"]
 
     logger.info(
@@ -171,6 +175,7 @@ def execute_node(state: TradingState) -> dict:
             "action": "BUY",
             "executed": True,
             "ticker": ticker,
+            "sector": market_ctx.get("sector", "Unknown"),
             "price": state["current_price"],
             "quantity": risk.get("quantity"),
             "position_size_inr": risk.get("position_size_inr"),
@@ -254,7 +259,12 @@ def build_graph():
 trading_graph = build_graph()
 
 
-def analyze_ticker(ticker: str, portfolio_cash: float, open_positions: int) -> dict:
+def analyze_ticker(
+    ticker: str,
+    portfolio_cash: float,
+    open_positions: int,
+    open_position_sectors: list[str],
+) -> dict:
     """Entry point - run the full pipeline for a single ticker"""
     initial_state: TradingState = {
         "ticker": ticker,
@@ -271,5 +281,6 @@ def analyze_ticker(ticker: str, portfolio_cash: float, open_positions: int) -> d
         "risk_result": None,
         "decision": None,
         "trade_result": None,
+        "open_position_sectors": open_position_sectors,
     }
     return trading_graph.invoke(initial_state)
