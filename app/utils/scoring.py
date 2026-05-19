@@ -36,4 +36,12 @@ def compute_confidence(decision: dict, market_context: dict | None = None) -> in
     if "relative strength" in divergence.lower():
         score += 10
 
+    if decision.get("momentum_quality") == "STRONG" and decision.get(
+        "entry_timing"
+    ) in (
+        "ACCEPTABLE",
+        "POOR",
+    ):  # blocks entering after the move is done
+        score -= 15
+
     return max(0, min(100, score))

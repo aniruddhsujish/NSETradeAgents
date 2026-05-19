@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     llm_model_smart: str = "claude-sonnet-4-6"
 
     # Portfolio
-    starting_capital: float = 100000
+    starting_capital: float = 200000
     simulation_mode: bool = True
 
     # Database
@@ -25,12 +25,13 @@ class Settings(BaseSettings):
     api_port: int = 8000
 
     # Risk
-    max_positions: int = 3
-    max_position_pct: float = 0.25
+    max_positions: int = 5
+    max_position_pct: float = 0.20
     stop_loss_pct: float = 0.07
     take_profit_pct: float = 0.18
     max_hold_days: int = 21
-    min_confidence: float = 0.65
+    min_confidence: float = 0.68
+    high_conviction_threshold: float = 0.80
 
     # Screener
     min_volume_ratio: float = 2.0
@@ -39,8 +40,8 @@ class Settings(BaseSettings):
     max_day_change_pct: float = 8.0
     min_price: float = 100.0
     min_atr_pct: float = 1.5
-    rsi_min: float = 58.0
-    rsi_max: float = 67.0
+    rsi_min: float = 55.0
+    rsi_max: float = 70.0
 
 
 settings: Settings = Settings()
