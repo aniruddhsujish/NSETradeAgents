@@ -12,6 +12,7 @@ class TradingState(TypedDict):
     ticker_df: Any  # pd.DataFrame — 12mo price history
     ticker_info: dict | None  # yf.Ticker(ticker).info
     nifty_df: Any  # pd.DataFrame — Nifty 50 recent data
+    vix_df: Any  # pd.DataFrame - India VIX recent data
 
     # Derived / computed
     current_price: float

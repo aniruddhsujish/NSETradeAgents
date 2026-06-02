@@ -44,4 +44,19 @@ def compute_confidence(decision: dict, market_context: dict | None = None) -> in
     ):  # blocks entering after the move is done
         score -= 15
 
+    # India VIX fear adjustment
+    india_vix = ctx.get("india_vix") or 0
+    if india_vix > 22:
+        score -= 20
+    elif india_vix > 18:
+        score -= 10
+
+    # Nifty multi-day trend
+    nifty_10d = ctx.get("nifty_10d_pct", 0) or 0
+    nifty_20d = ctx.get("nifty_20d_pct", 0) or 0
+    if nifty_20d < -3.0:
+        score -= 10
+    if nifty_10d < -2.0:
+        score -= 8
+
     return max(0, min(100, score))

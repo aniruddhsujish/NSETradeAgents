@@ -45,6 +45,7 @@ def fetch_market_context(
     ticker_info: dict | None = None,
     nifty_df: pd.DataFrame | None = None,
     sector_dfs: dict[str, pd.DataFrame] | None = None,
+    vix_df: pd.DataFrame | None = None,
 ) -> dict:
     """
     Collect market-wide and stock-level context
@@ -83,10 +84,32 @@ def fetch_market_context(
             if len(nifty_close) >= 6
             else 0.0
         )
+        nifty_10d_pct = (
+            float(
+                (nifty_close.values[-1] - nifty_close.values[-11])
+                / nifty_close.values[-11]
+                * 100
+            )
+            if len(nifty_close) >= 11
+            else 0.0
+        )
+
+        nifty_20d_pct = (
+            float(
+                (nifty_close.values[-1] - nifty_close.values[-21])
+                / nifty_close.values[-21]
+                * 100
+            )
+            if len(nifty_close) >= 21
+            else 0.0
+        )
+
     except Exception as e:
         logger.warning("nifty_fetch_failed", error=str(e))
         nifty_day_pct = 0.0
         nifty_5d_pct = 0.0
+        nifty_10d_pct = 0.0
+        nifty_20d_pct = 0.0
 
     if nifty_day_pct > 0.5:
         market_label = "bullish"
@@ -167,9 +190,21 @@ def fetch_market_context(
     except Exception as e:
         logger.warning("sma20_compute_failed", error=str(e))
 
+    # --- 6. India VIX - marktet fear indicator -----------------------------------------
+    india_vix = None
+    try:
+        if vix_df is not None and not vix_df.empty:
+            vix_close = vix_df["Close"].squeeze()
+            india_vix = round(float(vix_close.values[-1]), 2)
+    except Exception as e:
+        logger.warning("vix_parse_failed", error=str(e))
+
     context = {
         "nifty_day_pct": round(nifty_day_pct, 2),
         "nifty_5d_pct": round(nifty_5d_pct, 2),
+        "nifty_10d_pct": round(nifty_10d_pct, 2),
+        "nifty_20d_pct": round(nifty_20d_pct, 2),
+        "india_vix": india_vix,
         "market_label": market_label,
         "sector": sector,
         "sector_day_pct": (

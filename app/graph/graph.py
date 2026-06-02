@@ -43,12 +43,32 @@ def fetch_data_node(state: TradingState) -> dict:
         logger.warning("nifty_fetch_failed", error=str(e))
         nifty_df = None
 
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            vix_df = yf.download(
+                "^INDIAVIX",
+                period="30d",
+                interval="1d",
+                progress=False,
+                auto_adjust=True,
+            )
+    except Exception as e:
+        logger.warning("vix_fetch_failed", error=str(e))
+        vix_df = None
+
     logger.info(
         "fetch_data_done",
         ticker=ticker,
         rows=len(ticker_df) if ticker_df is not None else 0,
+        vix_rows=len(vix_df) if vix_df is not None else 0,
     )
-    return {"ticker_df": ticker_df, "ticker_info": ticker_info, "nifty_df": nifty_df}
+    return {
+        "ticker_df": ticker_df,
+        "ticker_info": ticker_info,
+        "nifty_df": nifty_df,
+        "vix_df": vix_df,
+    }
 
 
 def fundamental_node(state: TradingState) -> dict:
@@ -62,6 +82,7 @@ def market_context_node(state: TradingState) -> dict:
         ticker_df=state.get("ticker_df"),
         ticker_info=state.get("ticker_info"),
         nifty_df=state.get("nifty_df"),
+        vix_df=state.get("vix_df"),
     )
     return {"market_context": ctx}
 
@@ -277,6 +298,7 @@ def analyze_ticker(
         "ticker_df": None,
         "ticker_info": None,
         "nifty_df": None,
+        "vix_df": None,
         "current_price": 0.0,
         "market_context": None,
         "fundamental_result": None,

@@ -6,6 +6,8 @@ def format_market_context(market_context: dict | None) -> str:
 Market context:
 - Nifty 50 today: {market_context.get('nifty_day_pct', 'N/A')}% (5d: {market_context.get('nifty_5d_pct', 'N/A')}%)
 - Market tone: {market_context.get('market_label', 'N/A')}
+- India VIX: {market_context.get('india_vix', 'N/A')}
+- Nifty 10d: {market_context.get('nifty_10d_pct', 'N/A')}% | 20d: {market_context.get('nifty_20d_pct', 'N/A')}%
 - Nifty trend: {market_context.get('trend_label', 'N/A')}
 - Sector ({market_context.get('sector', 'N/A')}) today: {market_context.get('sector_day_pct', 'N/A')}%
 - Distance from 52w high: {market_context.get('pct_from_52w_high', 'N/A')}%
