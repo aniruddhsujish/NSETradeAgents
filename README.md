@@ -1,6 +1,6 @@
 # NSETradeAgents
 
-Multi-agent AI system for swing trading NSE smallcap and midcap stocks. Targets 1-4 week holds with ATR-based stop losses and 18% take profit. Fully automated — morning discovery at 9:30 AM IST, 15-minute position monitoring during market hours.
+Multi-agent AI system for swing trading NSE smallcap and midcap stocks. Targets 1-4 week holds with ATR-based stops, a hybrid trailing stop for proven winners, and 18% take profit. Fully automated — morning discovery at 9:30 AM IST, 15-minute position monitoring during market hours.
 
 ---
 
@@ -11,7 +11,7 @@ NSE Universe (Smallcap 250 + Midcap 150 — 400 stocks)
         ↓
 Regime Gate  (Nifty 50 vs SMA50 — skips all new entries if market in sustained downtrend)
         ↓
-Math Screener  (7 filters: SMA trend, RSI 55-70, ATR >1.5%, volume >2×, liquidity >₹2Cr)
+Math Screener  (9 filters: SMA trend, RSI 55-70, ATR >1.5%, volume >2× on up day, momentum >2%, liquidity >₹2Cr)
         ↓
 fetch_data_node  (yfinance — single batch download before parallel fan-out)
         ↓
@@ -20,13 +20,13 @@ Fundamental Check  (deterministic — market cap, D/E ratio, ROE, no LLM)
         ├── Technical Agent    Claude Haiku  — 20 indicators, structured output, temperature=0
         ├── Sentiment Agent    Claude Haiku  — ReAct loop → Tavily search → scoring, temperature=0
         │     └── Research Agent  create_agent + Tavily — sector-aware autonomous search
-        └── Market Context     No LLM — Nifty 50 (day, 5d, SMA20 trend), sector index, 52w position, divergence
+        └── Market Context     No LLM — Nifty 50 (day/5d/10d/20d trend, SMA20, India VIX), sector index, 52w position, divergence
         ↓  fan-in
-Risk Agent       Deterministic — 3 hard gates + ATR-based position sizing (max 3 positions × 25%)
+Risk Agent       Deterministic — 4 hard gates + ATR-based position sizing (max 5 positions × 20%)
         ↓  conditional routing
 Decision Agent   Claude Sonnet — 5-dimension rubric → labels → computed confidence score, temperature=0
-        ↓  conditional routing (≥65% confidence to execute)
-Portfolio Simulator  SQLite — cash accounting, realised + unrealised P&L, snapshots every 15 min
+        ↓  conditional routing (≥68% confidence; ≥80% to unlock 5th high-conviction slot)
+Portfolio Simulator  SQLite — cash accounting, trailing stop management, realised + unrealised P&L
 ```
 
 **Single-process deployment:** FastAPI (async event loop) + APScheduler (BackgroundScheduler threads) run in one uvicorn process. The scheduler fires jobs in background threads; FastAPI serves the dashboard concurrently.
@@ -57,21 +57,21 @@ Portfolio Simulator  SQLite — cash accounting, realised + unrealised P&L, snap
 app/
 ├── agents/
 │   ├── fundamental.py      # Deterministic: market cap, D/E, ROE pre-filter
-│   ├── market_context.py   # Nifty/sector/52w/SMA20 trend — no LLM
+│   ├── market_context.py   # Nifty/sector/52w/SMA20/VIX — no LLM
 │   ├── technical.py        # 20 indicators + Claude Haiku
 │   ├── sentiment.py        # ReAct research agent + Tavily + Claude Haiku
 │   ├── risk.py             # Deterministic gates + ATR-based position sizing
 │   └── decision.py         # Claude Sonnet 5-dimension rubric decision
 ├── screener/
 │   ├── universe.py         # Fetch NSE CSV universe
-│   └── filters.py          # Regime gate + 7 math filters + ranking score
+│   └── filters.py          # Regime gate + 9 math filters + ranking score
 ├── graph/
 │   ├── state.py            # LangGraph TypedDict state
 │   └── graph.py            # LangGraph pipeline + confidence computation
 ├── portfolio/
-│   └── simulator.py        # Cash, trades, P&L snapshots
+│   └── simulator.py        # Cash, trades, trailing stop updates, P&L snapshots
 ├── scheduler/
-│   └── scheduler.py        # APScheduler — morning scan + 15-min position review
+│   └── scheduler.py        # APScheduler — morning scan + 15-min position review with hybrid trail logic
 ├── api/
 │   └── routes.py           # FastAPI app + all routes
 ├── templates/              # Jinja2 HTML templates
@@ -99,7 +99,7 @@ main.py                     # One-off scan entry point
 
 ```bash
 git clone <repo>
-cd swing-trade-bot
+cd NSETradeAgents
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
@@ -119,8 +119,8 @@ pytest tests/ -v
 
 | File | Tests | Coverage |
 |---|---|---|
-| `test_risk.py` | 6 | All 3 hard gates, position sizing math, boundary conditions |
-| `test_filters.py` | 6 | All 7 screener filters, ranking order, yfinance mocked |
+| `test_risk.py` | 6 | All 4 hard gates, position sizing math, boundary conditions |
+| `test_filters.py` | 6 | All 9 screener filters, ranking order, yfinance mocked |
 | `test_fundamental.py` | 7 | Market cap, D/E, ROE, sector exemptions, flags vs blocks |
 | `test_simulator.py` | 6 | Trade lifecycle, duplicate guard, cash check, P&L math |
 
@@ -136,44 +136,46 @@ python main.py
 ## Trading Strategy
 
 ### Universe
-NSE Nifty Smallcap 250 + Midcap 150. These indices are chosen deliberately — smallcap and midcap stocks offer higher volatility and momentum potential than large caps, making them better suited for 1-4 week swing trades. Large caps are excluded as they tend to move slowly and require more capital to generate meaningful returns.
+NSE Nifty Smallcap 250 + Midcap 150. Smallcap and midcap stocks offer higher volatility and momentum potential than large caps, making them better suited for 1-4 week swing trades.
 
 ---
 
 ### Stage 0 — Regime Gate
 
-Before running any candidates through the pipeline, the screener checks whether Nifty 50 is trading above its 50-day SMA. If Nifty is below SMA50, all new entries are skipped for the day — existing positions continue to be monitored and closed normally.
+Before running any candidates through the pipeline, the screener checks whether Nifty 50 is trading above its 50-day SMA. If below, all new entries are skipped for the day — existing positions continue to be monitored and closed normally.
 
-This prevents deploying capital into sustained market downtrends. Backtesting showed that correction periods (Jan 2025: 14/14 stops, Jul 2025: 7/7 stops) were almost entirely avoided by this single gate, saving ~₹44,000 in losses over 3 years.
+Backtesting showed correction periods (Jan 2025: 14/14 stops, Jul 2025: 7/7 stops) were almost entirely avoided by this gate, saving ~₹44,000 in losses over 3 years.
 
 ---
 
-### Stage 1 — Math Screener (7 filters)
+### Stage 1 — Math Screener (9 filters)
 
-All 7 must pass. Candidates are then ranked by a composite score weighted 40% volume ratio, 35% 5-day momentum, 25% ATR%.
+All 9 must pass. Candidates are then ranked by a composite score weighted 40% volume ratio, 35% 5-day momentum, 25% ATR%.
 
 | Filter | Threshold | Rationale |
 |---|---|---|
-| Price > SMA50 > SMA200 | Must be true | Confirms the stock is in a structural uptrend at both medium and long-term timeframes. Avoids catching falling knives. |
-| RSI (14) | 55 – 70 | The sweet spot for swing entry. Below 55 = weak momentum, not yet confirmed. Above 70 = overbought, late to the move, high reversion risk. |
-| ATR% | > 1.5% | Average True Range as % of price. Ensures the stock has enough daily volatility to deliver meaningful returns in 1-4 weeks. Stocks with ATR% < 1.5% move too slowly. |
-| Volume ratio | > 2× 20-day avg | Unusual volume signals institutional participation. A breakout or momentum move on thin volume is unreliable — operators can move small-caps on low volume. 2× filters for genuine conviction. |
-| Volume shares | > 50,000 shares | Absolute floor to avoid illiquid stocks where even ₹25k positions move the price. |
-| Avg daily traded value | > ₹2 crore | Liquidity floor. Ensures there's enough daily turnover to enter and exit without significant slippage. |
-| Day change | < 8% | Avoids chasing stocks that have already made their move. Entering after an 8%+ day usually means buying the top of a spike. |
+| Price > SMA50 > SMA200 | Must be true | Confirms structural uptrend at medium and long-term timeframes. |
+| RSI (14) | 55 – 70 | Sweet spot for swing entry — confirmed momentum without being overbought. |
+| ATR% | > 1.5% | Ensures enough daily volatility to deliver meaningful returns in 1-4 weeks. |
+| Volume ratio | > 2× 20-day avg | Unusual volume signals institutional participation behind the move. |
+| Volume on up day | Day change > 0.5% | High volume on a down day is distribution, not accumulation. |
+| 5-day momentum | > 2% | Filters stocks that are technically sound but not actually moving. |
+| Volume shares | > 50,000 shares | Absolute liquidity floor to avoid illiquid micro-caps. |
+| Avg daily traded value | > ₹2 crore | Ensures enough daily turnover to enter and exit without slippage. |
+| Day change | < 8% | Avoids chasing stocks that have already made their primary move. |
 
 ---
 
 ### Stage 2 — Fundamental Pre-Filter
 
-Runs after data fetch, before expensive LLM agents. Rejects structurally broken companies to avoid wasting API credits on bad setups.
+Runs before expensive LLM agents. Rejects structurally broken companies.
 
 | Check | Threshold | Rationale |
 |---|---|---|
-| Market cap | > ₹500 crore | Below this on NSE you're in micro-cap territory: thin float, operator-driven price action, poor institutional coverage, high manipulation risk. |
-| Debt/Equity | < 2.0× (non-financial) | Highly leveraged companies are vulnerable to rate hikes, credit tightening, and bad news. Skipped for banks/NBFCs where leverage is structural. |
-| Return on Equity | > 0% | Companies with negative ROE are destroying shareholder value. A negative-ROE stock on a technical setup is often a dead-cat bounce. |
-| Revenue growth | Flag if < -10% YoY | Soft flag only — not a hard block. Declining revenue is a risk factor the decision agent weighs, but a recovering business can still be a valid swing trade. |
+| Market cap | > ₹500 crore | Below this: thin float, operator-driven price action, manipulation risk. |
+| Debt/Equity | < 2.0× (non-financial) | Skipped for banks/NBFCs where leverage is structural. |
+| Return on Equity | > 0% | Negative ROE stocks on technical setups are often dead-cat bounces. |
+| Revenue growth | Flag if < -10% YoY | Soft flag — not a hard block, but passed to the decision agent. |
 
 ---
 
@@ -182,85 +184,86 @@ Runs after data fetch, before expensive LLM agents. Rejects structurally broken 
 Three agents run simultaneously after fundamental approval:
 
 **Technical Agent (Claude Haiku, temperature=0)**
-Interprets 20 computed indicators: RSI, MACD (line, signal, histogram trend), Bollinger Bands (position, width), SMA50/200, ATR%, volume ratio, 5-day and 20-day momentum, day change. Outputs BUY/HOLD/SELL signal with a strength score (0-100) and a 2-3 sentence reasoning. Temperature=0 ensures the same indicator readings produce the same interpretation on repeat runs.
+Interprets 20 computed indicators: RSI, MACD (line, signal, histogram trend), Bollinger Bands, SMA50/200, ATR%, volume ratio, 5-day and 20-day momentum, day change. Outputs BUY/HOLD/SELL signal with strength score and reasoning.
 
 **Sentiment Agent (Claude Haiku, temperature=0)**
-Two-step process: (1) A ReAct research agent autonomously decides what to search — not just the company name, but sector-specific queries (e.g., for pharma: USFDA approvals, ANDA filings; for banking: NPA trends, RBI policy). Searches 10 curated Indian financial news domains plus Twitter and Reddit. (2) A separate scoring agent evaluates the findings on materiality, recency, and short-term relevance. Outputs BUY/HOLD/SELL signal with a score (-100 to +100). Research agent runs at default temperature for creative query generation; scoring runs at temperature=0.
+Two-step: (1) ReAct research agent autonomously generates sector-specific queries (pharma: USFDA approvals; banking: NPA trends, RBI policy) and searches Indian financial news. (2) Separate scoring agent evaluates findings on materiality, recency, and short-term relevance. Outputs BUY/HOLD/SELL with score (-100 to +100).
 
 **Market Context (no LLM)**
-Deterministic computation: Nifty 50 day, 5-day, and SMA20 trend position (above/below SMA20 relative to SMA50 — early correction detection), sector index performance, stock's 52-week position (% from high/low), and a divergence note (stock rising while sector falls = relative strength, the most bullish signal).
+Deterministic: Nifty 50 day/5d/10d/20d trend, SMA20 position (early correction detection), India VIX (fear gauge), sector index performance, 52-week position, and divergence note (stock rising while sector falls = relative strength).
 
 ---
 
 ### Stage 4 — Risk Gates (Deterministic)
 
-Three non-negotiable hard blocks applied before the decision agent:
+Four non-negotiable hard blocks applied before the decision agent:
 
-1. **Max positions** — blocks if 3 positions already open
+1. **Max positions** — blocks if 5 positions already open (4 regular + 1 high-conviction)
 2. **Dual SELL signal** — blocks if both technical AND sentiment signal SELL simultaneously
-3. **Position affordability** — blocks if stock price × minimum lot exceeds available position budget, or if position would be below ₹5,000 (too small to be meaningful)
+3. **Position affordability** — blocks if position would exceed budget or be below ₹5,000
+4. **Sector concentration** — blocks if 2 positions already open in the same sector
 
 ---
 
 ### Stage 5 — Decision Agent (Claude Sonnet, temperature=0)
 
-The decision agent scores the setup across 5 independent dimensions and outputs a categorical label for each. Confidence is computed deterministically in Python from these labels — the model never outputs a number directly, eliminating anchoring bias.
+Scores the setup across 5 independent dimensions and outputs a categorical label for each. Confidence is computed deterministically in Python — the model never outputs a number directly, eliminating LLM anchoring bias.
 
-**Pre-scoring:** Before evaluating dimensions, the model writes:
-- `kill_case` — the single most specific falsifiable reason this trade fails
-- `strong_setup_conditions` — what would make this score well across most dimensions
-- `weak_setup_conditions` — what would make this score poorly
+**Pre-scoring:** Before evaluating dimensions, the model writes a `kill_case` (specific falsifiable failure reason), `strong_setup_conditions`, and `weak_setup_conditions`. This commits the model to concrete conditions before scoring.
 
 **Dimensions and point values:**
 
-| Dimension | STRONG/IDEAL/FAVORABLE | MODERATE/ACCEPTABLE/NEUTRAL | WEAK/POOR/UNFAVORABLE/CONFLICTED |
+| Dimension | Best | Mid | Worst |
 |---|---|---|---|
 | Signal alignment | 30 | 18 | 0 |
 | Entry timing | 25 | 15 | 0 |
 | Momentum quality | 20 | 12 | 0 |
 | Risk/reward view | 15 | 8 | 0 |
-| Setup concern | 10 (NONE) | 5 (MINOR) | 0 (SIGNIFICANT) |
+| Setup concern | 10 | 5 | 0 |
 
-**Market context adjustments** (applied in code after LLM output):
-- Bearish Nifty (>1% down): −15 points
-- Bearish sector (>0.5% down): −10 points
-- Relative strength vs sector: +10 points
+**Scoring adjustments** (deterministic, applied in `scoring.py`):
+- Bearish Nifty (>1% down): −15 pts
+- Bearish sector (>0.5% down): −10 pts
+- Relative strength vs sector: +10 pts
+- India VIX > 22: −20 pts | VIX > 18: −10 pts
+- Nifty 20d trend < −3%: −10 pts | 10d trend < −2%: −8 pts
+- Strong momentum + late entry (overextension): −15 pts
 
-**Confidence threshold:** ≥65 to execute. Max possible score is 100.
+**Confidence threshold:** ≥68 to execute on regular slots. ≥80 to unlock the 5th high-conviction slot.
 
 ---
 
 ### Position Sizing & Risk Management
 
-**Entry:** ₹1,00,000 starting capital. Max 3 positions × 25% = ₹25,000 per position. The 3-position cap keeps 25% capital in reserve, reducing worst-case simultaneous stop-out from 28% to 21% of total capital.
+**Entry:** ₹2,00,000 starting capital. 4 regular positions × 20% = ₹40,000 each. A 5th slot opens only when confidence ≥ 80 (high-conviction setup).
 
-**Stop loss:** ATR-based — `2.5 × ATR%` of entry price, with a 5% floor and 10% cap. Calibrates the stop to each stock's actual volatility rather than applying a fixed rule. A stock with ATR% 2.0% gets a ~5% stop (tight, low-volatility); ATR% 3.5% gets an 8.75% stop (room to breathe).
+**Stop loss:** ATR-based — `2.5 × ATR%` with a 5% floor and 10% cap.
 
-**Take profit:** Fixed 18% above entry price.
+**Take profit:** 18% above entry price — applies until trailing stop activates.
 
-**Holding period:** 1-4 weeks. The 15-minute position monitor auto-closes positions when stop or target is hit intraday. Positions held beyond 21 days are closed at market price — the swing trade thesis is no longer valid after 3 weeks.
+**Trailing stop & Hybrid mode:**
+Once a position rises +12% above entry, a trailing stop activates at `2 × ATR%` below the highest price seen (5% floor, 8% cap). For up to 3 positions simultaneously, the 21-day timeout and 18% target are also removed — the trailing stop becomes the only exit. This allows genuine momentum winners to run freely (UNOMINDA +45%, POLYCAB +39%) while protecting gains on reversal.
 
-**Known limitations:**
-- Regime gate uses SMA50 (slow-moving) — fast 3-5 week corrections that don't push Nifty below SMA50 are not fully filtered. SMA20 context is passed to the decision agent but is not a hard gate.
-- No sector concentration limit — all 3 positions could theoretically be in the same sector. Sector exposure capping is a planned improvement.
-- Sentiment backtesting is not reproducible — Tavily fetches live news, so historical sentiment cannot be replayed. Backtest results reflect technical and structural signals only.
+**Holding period:** 1-4 weeks for standard positions. Unlimited for hybrid-active positions — the trailing stop is the only exit once activated.
+
+**Circuit breaker:** If portfolio drops >8% from its 30-day peak (measured from snapshots), new entries pause until recovered. Existing positions continue normally.
 
 ---
 
 ## Technical Highlights
 
-**yfinance 401 fix** — Yahoo Finance rate-limits concurrent requests. `fetch_data_node` downloads all ticker data once before the parallel fan-out. The three parallel agents read from LangGraph state instead of making independent HTTP calls.
+**Anchoring-free confidence scoring** — the decision agent outputs categorical labels rather than a single integer. A deterministic scoring map in `utils/scoring.py` converts labels to points and applies all market adjustments. This eliminates LLM anchoring to minimum-passing values, a known failure mode of single-number structured outputs validated across multiple backtests.
 
-**Determinism by design** — technical, sentiment scoring, and decision agents all run at `temperature=0`. The research agent (creative query generation) runs at default temperature. Consistent inputs produce consistent outputs across runs, preventing borderline decisions from flipping between runs of the same day's data.
+**Hybrid trailing stop** — positions that prove themselves with a +12% move switch into hybrid mode: timeout removed, 18% cap removed, trailing stop is the only exit. Up to 3 positions can be hybrid simultaneously, ensuring at least 2 slots cycle normally and remain available for new entries.
 
-**Anchoring-free confidence scoring** — the decision agent outputs categorical labels (STRONG/ACCEPTABLE/CONFLICTED etc.) rather than a single integer. A deterministic scoring map in `utils/scoring.py` converts labels to points and applies market context adjustments. This prevents LLMs from anchoring to minimum-passing values (a known failure mode of single-number structured outputs).
+**VIX-aware scoring** — India VIX (`^INDIAVIX`) is fetched at scan time and passed through the scoring pipeline. Elevated fear (VIX > 18) reduces confidence deterministically, blocking momentum entries in high-fear environments regardless of individual stock quality.
 
-**Single-process architecture** — `BackgroundScheduler` (APScheduler) runs trading jobs in threads alongside FastAPI's async event loop in one uvicorn process. No separate scheduler process or message broker needed.
+**yfinance 401 fix** — `fetch_data_node` downloads all ticker data once before the parallel fan-out. The three parallel agents read from LangGraph state instead of making independent HTTP calls.
 
-**Real-time log streaming** — structlog writes every log entry to an in-memory `deque(maxlen=500)`. The `/logs` SSE endpoint polls the deque every 500ms and streams new entries to the browser via `EventSource`. No WebSocket or Redis needed.
+**Determinism by design** — all agents run at `temperature=0`. Consistent inputs produce consistent outputs, preventing borderline decisions from flipping between runs of the same day's data.
 
-**Mark-to-market P&L** — the 15-minute position review fetches live prices via yfinance intraday (5-min bars), updates `current_price` on each open `Trade` row, and saves a `PortfolioSnapshot` with unrealised P&L. The dashboard reads from DB — no live price fetch on page load.
+**Single-process architecture** — `BackgroundScheduler` runs trading jobs in threads alongside FastAPI's event loop in one uvicorn process. No separate process or message broker needed.
 
-**NSE holiday awareness** — `_load_nse_holidays(year)` fetches the official NSE holiday list from `nseindia.com/api/holiday-master?type=trading` on first call and caches via `@lru_cache`. Position reviews skip cleanly on market holidays.
+**Real-time log streaming** — structlog writes to an in-memory `deque(maxlen=500)`. The `/logs` SSE endpoint streams new entries to the browser via `EventSource`. No WebSocket or Redis needed.
 
-**SQLAlchemy 2.0** — all models use `Mapped[T]` annotations and `mapped_column()`. Pylance resolves column types correctly without stubs or `# type: ignore`.
+**NSE holiday awareness** — official NSE holiday list fetched on first call and cached via `@lru_cache`. Position reviews skip cleanly on market holidays.

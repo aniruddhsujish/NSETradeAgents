@@ -43,5 +43,11 @@ class Settings(BaseSettings):
     rsi_min: float = 55.0
     rsi_max: float = 70.0
 
+    # Trailing stop
+    trail_activation_pct: float = 0.12
+    trail_min_pct: float = 0.05  # floor for ATR-based trail
+    trail_max_pct: float = 0.08  # cap for ATR-based trail
+    max_hybrid_positions: int = 3
+
 
 settings: Settings = Settings()

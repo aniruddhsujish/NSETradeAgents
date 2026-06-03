@@ -176,6 +176,8 @@ def execute_node(state: TradingState) -> dict:
     risk = state.get("risk_result") or {}
     market_ctx = state.get("market_context") or {}
     ticker = state["ticker"]
+    tech = state.get("technical_signals") or {}
+    atr_pct = (tech.get("indicators") or {}).get("atr_pct")
 
     logger.info(
         "trade_execute",
@@ -202,6 +204,7 @@ def execute_node(state: TradingState) -> dict:
             "position_size_inr": risk.get("position_size_inr"),
             "stop_loss": risk.get("stop_loss"),
             "take_profit": risk.get("take_profit"),
+            "atr_pct": atr_pct,
             "confidence": decision.get("confidence"),
             "reasoning": decision.get("reasoning"),
         }

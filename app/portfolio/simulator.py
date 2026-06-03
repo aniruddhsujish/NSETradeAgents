@@ -34,6 +34,10 @@ class PortfolioSimulator:
                     "entry_value": t.entry_value,
                     "stop_loss": t.stop_loss,
                     "take_profit": t.take_profit,
+                    "peak_price": t.peak_price,
+                    "trail_stop": t.trail_stop,
+                    "hybrid_active": t.hybrid_active or False,
+                    "atr_pct": t.atr_pct,
                     "opened_at": t.opened_at,
                     "sector": t.sector or "Unknown",
                 }
@@ -82,6 +86,7 @@ class PortfolioSimulator:
                 entry_price=trade_result["price"],
                 quantity=trade_result["quantity"],
                 entry_value=entry_value,
+                atr_pct=trade_result.get("atr_pct"),
                 stop_loss=trade_result["stop_loss"],
                 take_profit=trade_result["take_profit"],
                 status="open",
@@ -143,6 +148,25 @@ class PortfolioSimulator:
                 reason=reason,
             )
             return trade
+
+    def update_trail(
+        self,
+        ticker: str,
+        peak_price: float,
+        trail_stop: float,
+        hybrid_active: bool = False,
+    ) -> None:
+        with get_db() as db:
+            trade = (
+                db.query(Trade)
+                .filter(Trade.ticker == ticker, Trade.status == "open")
+                .first()
+            )
+            if trade:
+                trade.peak_price = peak_price
+                trade.trail_stop = trail_stop
+                if hybrid_active:
+                    trade.hybrid_active = True
 
     def save_snapshot(
         self, open_prices: dict[str, float] | None = None
