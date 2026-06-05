@@ -95,7 +95,6 @@ def review_positions() -> None:
         return
 
     live_prices: dict[str, float] = {}
-    hybrid_active_count = sum(1 for p in positions if p.get("hybrid_active"))
 
     for position in positions:
         ticker = position["ticker"]
@@ -113,74 +112,25 @@ def review_positions() -> None:
 
         stop_loss = position["stop_loss"]
         take_profit = position["take_profit"]
-        entry_price = position["entry_price"]
         peak_price = position.get("peak_price") or 0
-        trail_stop_val = position.get("trail_stop") or 0
         hybrid_active = position.get("hybrid_active", False)
-        atr_pct = position.get("atr_pct") or 0
 
-        # ATR-based trail width - wider for volatile stocks, capped between 5-8%
-        trail_pct = (
-            min(
-                max(2.0 * atr_pct / 100, settings.trail_min_pct), settings.trail_max_pct
-            )
-            if atr_pct
-            else settings.trail_min_pct
-        )
-
-        trail_eligible = current_price >= entry_price * (
-            1 + settings.trail_activation_pct
-        )
-        is_already_trail = peak_price > 0
-
-        if trail_eligible:
-            new_peak = max(current_price, peak_price)
-            new_trail_stop = max(new_peak * (1 - trail_pct), trail_stop_val)
-
-            if not is_already_trail:
-                should_be_hybrid = hybrid_active_count < settings.max_hybrid_positions
-                if should_be_hybrid:
-                    hybrid_active_count += 1
-                    hybrid_active = True
-                simulator.update_trail(
-                    ticker, new_peak, new_trail_stop, hybrid_active=should_be_hybrid
-                )
+        # Catastrophe protection - hybrid positions only
+        # fires if price drops 15% below peak intraday (fraud, accident, major news etc) - bypasses normal trail and exits immediately to prevent large loss
+        if hybrid_active and peak_price > 0:
+            catastophe_stop = peak_price * (1 - settings.trail_intraday_catastrophe_pct)
+            if current_price <= catastophe_stop:
                 logger.info(
-                    "trail_activated",
-                    ticker=ticker,
-                    peak=new_peak,
-                    trail_stop=new_trail_stop,
-                    hybrid=should_be_hybrid,
-                )
-            elif new_peak != peak_price or new_trail_stop != trail_stop_val:
-                simulator.update_trail(ticker, new_peak, new_trail_stop)
-
-            if current_price <= new_trail_stop:
-                logger.info(
-                    "position_review_trail_hit",
+                    "position_review_catastrophe_stop",
                     ticker=ticker,
                     price=current_price,
-                    peak=new_peak,
-                    trail_stop=new_trail_stop,
+                    peak=peak_price,
+                    catastophe_stop=catastophe_stop,
                 )
-                simulator.close_trade(ticker, current_price, reason="trail")
-                if hybrid_active:
-                    hybrid_active_count -= 1
+                simulator.close_trade(ticker, current_price, reason="catastrophe")
                 continue
 
-            if hybrid_active:
-                logger.info(
-                    "position_review_hold_hybrid",
-                    ticker=ticker,
-                    price=current_price,
-                    peak=new_peak,
-                    trail_stop=new_trail_stop,
-                    pct_to_trail=round(
-                        (current_price - new_trail_stop) / current_price * 100, 2
-                    ),
-                )
-                continue
-
+        # Original stop loss - all positions
         if current_price <= stop_loss:
             logger.info(
                 "position_review_stop_hit",
@@ -189,7 +139,9 @@ def review_positions() -> None:
                 stop_loss=stop_loss,
             )
             simulator.close_trade(ticker, current_price, reason="sl")
-        elif current_price >= take_profit:
+
+        # Take profit and timeout - non-hybrid only
+        elif not hybrid_active and current_price >= take_profit:
             logger.info(
                 "position_review_target_hit",
                 ticker=ticker,
@@ -197,7 +149,11 @@ def review_positions() -> None:
                 reason="tp",
             )
             simulator.close_trade(ticker, current_price, reason="tp")
-        elif (datetime.now() - position["opened_at"]).days >= settings.max_hold_days:
+
+        elif (
+            not hybrid_active
+            and (datetime.now() - position["opened_at"]).days >= settings.max_hold_days
+        ):
             logger.info(
                 "position_review_timeout",
                 ticker=ticker,
@@ -206,6 +162,7 @@ def review_positions() -> None:
                 reason="timeout",
             )
             simulator.close_trade(ticker, current_price, reason="timeout")
+
         else:
             logger.info(
                 "position_review_hold",
@@ -218,6 +175,114 @@ def review_positions() -> None:
             )
 
     simulator.save_snapshot(open_prices=live_prices if live_prices else None)
+
+
+def review_trail_eod() -> None:
+    portfolio = simulator.get_portfolio_state()
+    positions = portfolio["positions"]
+
+    if not positions:
+        logger.info("trail_eod_no_positions")
+        return
+
+    tickers = [position["ticker"] for position in positions]
+    logger.info("trail_eod_start", tickers=tickers)
+
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            raw = yf.download(
+                tickers,
+                period="2d",
+                interval="1d",
+                group_by="ticker",
+                progress=False,
+                auto_adjust=True,
+            )
+    except Exception as e:
+        logger.error("trail_eod_fetch_failed", error=str(e))
+        return
+
+    if raw is None or raw.empty:
+        logger.warning("trail_eod_no_data")
+        return
+
+    hybrid_active_count = sum(1 for p in positions if p.get("hybrid_active", False))
+
+    for position in positions:
+        ticker = position["ticker"]
+        try:
+            if isinstance(raw.columns, pd.MultiIndex):
+                close_series = raw[ticker]["Close"]
+            else:
+                close_series = raw["Close"]
+            close_price = float(close_series.dropna().iloc[-1])
+        except Exception as e:
+            logger.error("trail_eod_fetch_failed", ticker=ticker, error=str(e))
+            continue
+
+        entry_price = position["entry_price"]
+        peak_price = position.get("peak_price") or 0
+        trail_stop_val = position.get("trail_stop") or 0
+        hybrid_active = position.get("hybrid_active", False)
+        atr_pct = position.get("atr_pct") or 0
+
+        trail_pct = (
+            min(
+                max(2.0 * atr_pct / 100, settings.trail_min_pct), settings.trail_max_pct
+            )
+            if atr_pct
+            else settings.trail_min_pct
+        )
+
+        trail_eligible = close_price >= entry_price * (
+            1 + settings.trail_activation_pct
+        )
+        is_already_trail = peak_price > 0
+
+        if not trail_eligible:
+            continue
+
+        new_peak = max(peak_price, close_price)
+        new_trail_stop = max(new_peak * (1 - trail_pct), trail_stop_val)
+
+        if not is_already_trail:
+            should_be_hybrid = hybrid_active_count < settings.max_hybrid_positions
+            if should_be_hybrid:
+                hybrid_active_count += 1
+                hybrid_active = True
+            simulator.update_trail(
+                ticker, new_peak, new_trail_stop, hybrid_active=should_be_hybrid
+            )
+            logger.info(
+                "trail_activated",
+                ticker=ticker,
+                close=close_price,
+                peak=new_peak,
+                trail_stop=new_trail_stop,
+                hybrid=should_be_hybrid,
+            )
+        elif new_peak != peak_price or new_trail_stop != trail_stop_val:
+            simulator.update_trail(ticker, new_peak, new_trail_stop)
+            logger.info(
+                "trail_updated",
+                ticker=ticker,
+                close=close_price,
+                peak=new_peak,
+                trail_stop=new_trail_stop,
+            )
+
+        if close_price <= new_trail_stop:
+            logger.info(
+                "trail_eod_hit",
+                ticker=ticker,
+                close=close_price,
+                peak=new_peak,
+                trail_stop=new_trail_stop,
+            )
+            simulator.close_trade(ticker, close_price, reason="trail")
+            if hybrid_active:
+                hybrid_active_count -= 1
 
 
 def create_scheduler() -> BackgroundScheduler:
@@ -233,10 +298,17 @@ def create_scheduler() -> BackgroundScheduler:
 
     sched.add_job(review_positions, IntervalTrigger(minutes=15), name="position_review")
 
+    sched.add_job(
+        review_trail_eod,
+        CronTrigger(day_of_week="mon-fri", hour=15, minute=35, timezone=IST),
+        name="trail_eod_review",
+    )
+
     logger.info(
         "scheduler_ready",
         morning_scan="09:30 IST Mon-Fri",
         review_position="Every 15 mins",
+        trail_eod="15:35 IST Mon-Fri",
     )
 
     return sched

@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     trail_min_pct: float = 0.05  # floor for ATR-based trail
     trail_max_pct: float = 0.08  # cap for ATR-based trail
     max_hybrid_positions: int = 3
+    trail_intraday_catastrophe_pct: float = (
+        0.15  # if price drops >15% intraday, bypass trail and exit immediately
+    )
 
 
 settings: Settings = Settings()
