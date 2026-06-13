@@ -110,7 +110,10 @@ cp .env.example .env        # add ANTHROPIC_API_KEY and TAVILY_API_KEY
 ```bash
 caffeinate -i uvicorn app.api.routes:app --reload --reload-dir app
 ```
-Open `http://localhost:8000`. The scheduler starts automatically — morning scan at 9:30 AM IST weekdays, position review every 15 minutes.
+Open `http://localhost:8000`. The scheduler starts automatically with three jobs:
+- **09:30 IST Mon–Fri** — morning scan, runs the full pipeline against the universe
+- **Every 15 min (market hours)** — position review: checks live prices against stop, target, timeout, and intraday catastrophe stop
+- **15:35 IST Mon–Fri** — EOD trail review: updates trailing stops and peak prices from the day's closing price, activates hybrid mode for newly eligible positions
 
 **Run tests:**
 ```bash
@@ -123,6 +126,9 @@ pytest tests/ -v
 | `test_filters.py` | 6 | All 9 screener filters, ranking order, yfinance mocked |
 | `test_fundamental.py` | 7 | Market cap, D/E, ROE, sector exemptions, flags vs blocks |
 | `test_simulator.py` | 6 | Trade lifecycle, duplicate guard, cash check, P&L math |
+| `test_decision.py` | 16 | BUY/HOLD/SELL outputs, dimension labels, pre-scoring fields, action normalisation, error fallback, model override |
+| `test_scoring.py` | 34 | Dimension score map, all market context adjustments, overextension penalty, score clamping, stacking behaviour |
+| `test_routing.py` | 16 | Confidence threshold gates, high-conviction 5th slot, action gate, edge cases |
 
 ---
 
@@ -242,11 +248,30 @@ Scores the setup across 5 independent dimensions and outputs a categorical label
 **Take profit:** 18% above entry price — applies until trailing stop activates.
 
 **Trailing stop & Hybrid mode:**
-Once a position rises +12% above entry, a trailing stop activates at `2 × ATR%` below the highest price seen (5% floor, 8% cap). For up to 3 positions simultaneously, the 21-day timeout and 18% target are also removed — the trailing stop becomes the only exit. This allows genuine momentum winners to run freely (UNOMINDA +45%, POLYCAB +39%) while protecting gains on reversal.
+Once a position rises +12% above entry, a trailing stop activates at `2 × ATR%` below the highest price seen (5% floor, 8% cap). For up to 3 positions simultaneously, the 21-day timeout and 18% target are also removed — the trailing stop becomes the only exit. This allows genuine momentum winners to run freely (NATIONALUM +75%, CHOICEIN +44%, RKFORGE +41%) while protecting gains on reversal.
+
+**Intraday catastrophe stop (hybrid positions only):** If a hybrid position's live price drops more than 15% below its recorded peak intraday — indicative of fraud, accident, or major news — the position exits immediately, bypassing the normal trailing stop logic.
 
 **Holding period:** 1-4 weeks for standard positions. Unlimited for hybrid-active positions — the trailing stop is the only exit once activated.
 
 **Circuit breaker:** If portfolio drops >8% from its 30-day peak (measured from snapshots), new entries pause until recovered. Existing positions continue normally.
+
+---
+
+## Backtest Results
+
+Backtested against 3 years of live NSE data (Jan 2023 – Dec 2025) with ₹2,00,000 starting capital using claude-sonnet-4-6.
+
+| Metric | Value |
+|---|---|
+| Total Return | +36.81% |
+| CAGR | 11.04% |
+| Max Drawdown | −10.46% |
+| Sharpe Ratio | 0.455 |
+| Calmar Ratio | 1.055 |
+| Total Trades | 85 |
+| Win Rate | 44.7% |
+| Profit Factor | 1.88× |
 
 ---
 
@@ -265,5 +290,7 @@ Once a position rises +12% above entry, a trailing stop activates at `2 × ATR%`
 **Single-process architecture** — `BackgroundScheduler` runs trading jobs in threads alongside FastAPI's event loop in one uvicorn process. No separate process or message broker needed.
 
 **Real-time log streaming** — structlog writes to an in-memory `deque(maxlen=500)`. The `/logs` SSE endpoint streams new entries to the browser via `EventSource`. No WebSocket or Redis needed.
+
+**Prompt caching** — the decision agent's system prompt (the full scoring rubric) is marked with `cache_control: ephemeral` and sent as a `SystemMessage` separate from the per-stock human message. Anthropic's prompt cache keeps the static rubric cached across the batch of candidates in each run, significantly reducing input token costs when evaluating many candidates in one session.
 
 **NSE holiday awareness** — official NSE holiday list fetched on first call and cached via `@lru_cache`. Position reviews skip cleanly on market holidays.
