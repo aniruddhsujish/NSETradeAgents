@@ -3,7 +3,7 @@ from datetime import datetime, date
 from app.core.config import settings
 from app.core.database import get_db
 
-from app.models.models import Trade, PortfolioSnapshot
+from app.models.models import Trade, PortfolioSnapshot, DecisionRecord
 
 logger = structlog.get_logger()
 
@@ -138,6 +138,22 @@ class PortfolioSimulator:
             trade.pnl = pnl
             trade.pnl_pct = pnl_pct
             trade.closed_at = datetime.now()
+
+            record = (
+                db.query(DecisionRecord)
+                .filter(
+                    DecisionRecord.ticker == ticker,
+                    DecisionRecord.executed == True,
+                    DecisionRecord.closed_at == None,
+                )
+                .order_by(DecisionRecord.evaluated_at.desc())
+                .first()
+            )
+            if record:
+                record.close_price = close_price
+                record.pnl_pct = pnl_pct
+                record.close_reason = reason
+                record.closed_at = datetime.now()
 
             logger.info(
                 "trade_closed",

@@ -1,7 +1,8 @@
 import structlog
 from app import portfolio
 from app.core.logging import setup_logging
-from app.core.database import init_db
+from app.core.database import init_db, get_db
+from app.models.models import DecisionRecord
 from app.core.config import settings
 from app.screener.universe import fetch_universe
 from app.screener.filters import screen
@@ -71,12 +72,38 @@ def run_scan():
             continue
 
         trade_result = final_state.get("trade_result") or {}
-        if trade_result.get("executed"):
+        decision = final_state.get("decision") or {}
+        executed = trade_result.get("executed", False)
+
+        block_reasons = trade_result.get("reasons")
+        block_reason = ", ".join(block_reasons) if block_reasons else None
+
+        with get_db() as db:
+            db.add(
+                DecisionRecord(
+                    ticker=ticker,
+                    action=trade_result.get("action")
+                    or decision.get("action")
+                    or "BLOCKED",
+                    confidence=decision.get("confidence"),
+                    executed=executed,
+                    signal_alignment=decision.get("signal_alignment"),
+                    entry_timing=decision.get("entry_timing"),
+                    momentum_quality=decision.get("momentum_quality"),
+                    risk_reward_view=decision.get("risk_reward_view"),
+                    setup_concern=decision.get("setup_concern"),
+                    kill_case=decision.get("kill_case"),
+                    block_reason=block_reason,
+                    entry_price=trade_result.get("price") if executed else None,
+                )
+            )
+        if executed:
             simulator.open_trade(
                 trade_result=trade_result,
                 technical=final_state.get("technical_signals") or {},
                 sentiment=final_state.get("sentiment_data") or {},
             )
+
     simulator.save_snapshot()
     logger.info("scan_complete")
 

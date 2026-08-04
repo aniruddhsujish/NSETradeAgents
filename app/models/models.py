@@ -66,3 +66,32 @@ class WatchlistStock(Base):
         DateTime, server_default=func.now()
     )
     last_analysed_at: Mapped[Optional[datetime]]
+
+
+class DecisionRecord(Base):
+    __tablename__ = "decision_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ticker: Mapped[str] = mapped_column(String(20))
+    evaluated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, server_default=func.now()
+    )
+
+    action: Mapped[str] = mapped_column(String(10))
+    confidence: Mapped[Optional[float]] = mapped_column(nullable=True)
+    executed: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    signal_alignment: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    entry_timing: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    momentum_quality: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    risk_reward_view: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    setup_concern: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    kill_case: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    block_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    entry_price: Mapped[Optional[float]] = mapped_column(nullable=True)
+
+    close_price: Mapped[Optional[float]] = mapped_column(nullable=True)
+    pnl_pct: Mapped[Optional[float]] = mapped_column(nullable=True)
+    close_reason: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
