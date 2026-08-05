@@ -1,6 +1,7 @@
 import yfinance as yf
 import pandas as pd
 import structlog
+from app.utils.market_data import safe_yf_download
 
 logger = structlog.get_logger()
 
@@ -28,9 +29,7 @@ def _day_change_pct(ticker_sym: str, df: pd.DataFrame | None = None) -> float | 
         if df is not None and len(df) >= 2:
             close = df["Close"].squeeze()
         else:
-            data = yf.download(
-                ticker_sym, period="5d", interval="1d", progress=False, auto_adjust=True
-            )
+            data = safe_yf_download(ticker_sym, period="5d")
             if data is None or len(data) < 2:
                 return None
             close = data["Close"].squeeze()
@@ -67,9 +66,7 @@ def fetch_market_context(
         nifty_raw = (
             nifty_df
             if nifty_df is not None
-            else yf.download(
-                "^NSEI", period="60d", interval="1d", progress=False, auto_adjust=True
-            )
+            else safe_yf_download("^NSEI", period="60d")
         )
         nifty_close = nifty_raw["Close"].squeeze()
         nifty_day_pct = float(
@@ -140,9 +137,7 @@ def fetch_market_context(
         hist = (
             ticker_df
             if ticker_df is not None
-            else yf.download(
-                ticker, period="52wk", interval="1d", progress=False, auto_adjust=True
-            )
+            else safe_yf_download(ticker, period="52wk")
         )
 
         if hist is not None and len(hist) > 0:

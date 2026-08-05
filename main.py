@@ -94,6 +94,7 @@ def run_scan():
                     setup_concern=decision.get("setup_concern"),
                     kill_case=decision.get("kill_case"),
                     block_reason=block_reason,
+                    rules_score=final_state.get("rules_score"),
                     entry_price=trade_result.get("price") if executed else None,
                 )
             )

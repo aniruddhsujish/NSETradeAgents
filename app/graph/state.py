@@ -27,3 +27,4 @@ class TradingState(TypedDict):
 
     # Final
     trade_result: dict | None
+    rules_score: int | None

@@ -1,8 +1,7 @@
-import yfinance as yf
-import pandas as pd
-import warnings
 import structlog
 from app.utils.indicators import compute_indicators
+from app.utils.market_data import safe_yf_download, extract_ticker_df
+from app.core.config import settings
 
 logger = structlog.get_logger()
 
@@ -23,14 +22,10 @@ def screen(tickers: list[str], config: dict) -> list[dict]:
         rsi_max               float  e.g. 70.0
     """
     try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            _nifty = yf.download(
-                "^NSEI", period="60d", interval="1d", progress=False, auto_adjust=True
-            )
-        if not _nifty.empty and len(_nifty) >= 50:
+        _nifty = safe_yf_download("^NSEI", period="60d")
+        if not _nifty.empty and len(_nifty) >= settings.regime_sma_period:
             _close = _nifty["Close"].squeeze()
-            if float(_close.iloc[-1]) < float(_close.tail(50).mean()):
+            if float(_close.iloc[-1]) < float(_close.tail(settings.regime_sma_period).mean()):
                 logger.info(
                     "screener_regime_blocked",
                     reason="Nifty50 below 50d SMA - skipping new entries",
@@ -46,16 +41,7 @@ def screen(tickers: list[str], config: dict) -> list[dict]:
         return []
 
     # Download all tickers in one batch
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        raw = yf.download(
-            tickers,
-            period="12mo",
-            interval="1d",
-            group_by="ticker",
-            progress=False,
-            auto_adjust=True,
-        )
+    raw = safe_yf_download(tickers, period="12mo", group_by="ticker")
 
     candidates = []
     counts = {
@@ -73,14 +59,10 @@ def screen(tickers: list[str], config: dict) -> list[dict]:
 
     for ticker in tickers:
         try:
-            # Extract this ticker's slice from the batch download
-            if isinstance(raw.columns, pd.MultiIndex):
-                if ticker not in raw.columns.get_level_values(0):
-                    counts["no_data"] += 1
-                    continue
-                df = raw[ticker]
-            else:
-                df = raw
+            df = extract_ticker_df(raw, ticker)
+            if df is None:
+                counts["no_data"] += 1
+                continue
 
             df = df.dropna(subset=["Close", "Volume"])
 

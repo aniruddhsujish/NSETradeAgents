@@ -31,6 +31,37 @@ Portfolio Simulator  SQLite — cash accounting, trailing stop management, reali
 
 **Single-process deployment:** FastAPI (async event loop) + APScheduler (BackgroundScheduler threads) run in one uvicorn process. The scheduler fires jobs in background threads; FastAPI serves the dashboard concurrently.
 
+```mermaid
+flowchart TD
+    A([NSE Universe\n400 stocks]) --> B[Regime Gate\nNifty 50 vs SMA50]
+    B -- market downtrend --> SKIP([Skip])
+    B --> C[Math Screener\n9 filters + ranking]
+    C --> D[fetch_data_node\nbatch download]
+    D --> E[Fundamental Check\ndeterministic]
+    E -- blocked --> BLK([Blocked])
+    E --> F[Technical Agent\nClaude Haiku]
+    E --> G[Sentiment Agent\nClaude Haiku + Tavily]
+    E --> H[Market Context\ndeterministic]
+    F --> I[Risk Gates\ndeterministic]
+    G --> I
+    H --> I
+    I -- blocked --> BLK
+    I --> J[Decision Agent\nClaude Sonnet]
+    J -- "HOLD / SELL or confidence < 68%" --> BLK
+    J -- "BUY ≥ 68%" --> K[Execute]
+    K --> L[(Portfolio Simulator\nSQLite)]
+
+    style F fill:#7c3aed,color:#fff
+    style G fill:#7c3aed,color:#fff
+    style J fill:#7c3aed,color:#fff
+    style E fill:#1d4ed8,color:#fff
+    style H fill:#1d4ed8,color:#fff
+    style I fill:#1d4ed8,color:#fff
+    style B fill:#1d4ed8,color:#fff
+    style C fill:#1d4ed8,color:#fff
+    style D fill:#1d4ed8,color:#fff
+```
+*Purple = LLM nodes (Claude). Blue = deterministic.*
 ---
 
 ## Tech Stack
@@ -48,6 +79,8 @@ Portfolio Simulator  SQLite — cash accounting, trailing stop management, reali
 | Frontend | Tailwind CSS + Chart.js + Alpine.js (all via CDN) |
 | Config | Pydantic Settings (`.env`) |
 | Logging | structlog — timestamped console + in-memory deque → SSE stream |
+| Observaability | LangSmith - LLM call tracing per-node latency, token usage |
+| CI | GitHub Actions - pytest on every push and pull request |
 
 ---
 

@@ -89,6 +89,7 @@ class DecisionRecord(Base):
     kill_case: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     block_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    rules_score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     entry_price: Mapped[Optional[float]] = mapped_column(nullable=True)
 
     close_price: Mapped[Optional[float]] = mapped_column(nullable=True)

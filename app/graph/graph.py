@@ -1,4 +1,3 @@
-import warnings
 import structlog
 import yfinance as yf
 from langgraph.graph import StateGraph, START, END
@@ -10,7 +9,8 @@ from app.agents.sentiment import run_sentiment_analysis
 from app.agents.risk import run_risk_check
 from app.agents.decision import run_decision
 from app.core.config import settings
-from app.utils.scoring import compute_confidence
+from app.utils.scoring import compute_confidence, compute_rules_confidence
+from app.utils.market_data import safe_yf_download
 
 logger = structlog.get_logger()
 
@@ -21,11 +21,7 @@ def fetch_data_node(state: TradingState) -> dict:
     logger.info("fetch_data_start", ticker=ticker)
 
     # 12mo history covers both technical analysis and 52-week position needs
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        ticker_df = yf.download(
-            ticker, period="12mo", interval="1d", progress=False, auto_adjust=True
-        )
+    ticker_df = safe_yf_download(ticker, period="12mo")
 
     try:
         ticker_info = yf.Ticker(ticker).info
@@ -34,25 +30,13 @@ def fetch_data_node(state: TradingState) -> dict:
         ticker_info = {}
 
     try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            nifty_df = yf.download(
-                "^NSEI", period="60d", interval="1d", progress=False, auto_adjust=True
-            )
+        nifty_df = safe_yf_download("^NSEI", period="60d")
     except Exception as e:
         logger.warning("nifty_fetch_failed", error=str(e))
         nifty_df = None
 
     try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            vix_df = yf.download(
-                "^INDIAVIX",
-                period="30d",
-                interval="1d",
-                progress=False,
-                auto_adjust=True,
-            )
+        vix_df = safe_yf_download("^INDIAVIX", period="30d")
     except Exception as e:
         logger.warning("vix_fetch_failed", error=str(e))
         vix_df = None
@@ -123,6 +107,17 @@ def risk_node(state: TradingState) -> dict:
         open_position_sectors=state.get("open_position_sectors") or [],
     )
     return {"risk_result": result}
+
+
+def rules_gate_node(state: TradingState) -> dict:
+    score = compute_rules_confidence(
+        technical=state.get("technical_signals") or {},
+        sentiment=state.get("sentiment_data") or {},
+        risk=state.get("risk_result") or {},
+        market_context=state.get("market_context"),
+    )
+    logger.info("rules_gate", ticker=state["ticker"], rules_score=score)
+    return {"rules_score": score}
 
 
 def decision_node(state: TradingState) -> dict:
@@ -223,6 +218,12 @@ def route_after_risk(state: TradingState) -> str:
     risk = state.get("risk_result") or {}
     if not risk.get("approved"):
         return "blocked"
+    return "rules_gate"
+
+
+def route_after_rules_gate(state: TradingState) -> str:
+    if (state.get("rules_score") or 0) < settings.rules_confidence_threshold:
+        return "blocked"
     return "decision"
 
 
@@ -251,6 +252,7 @@ def build_graph():
     graph.add_node("sentiment", sentiment_node)
     graph.add_node("fetch_price", fetch_price_node)
     graph.add_node("risk", risk_node)
+    graph.add_node("rules_gate", rules_gate_node)
     graph.add_node("decision", decision_node)
     graph.add_node("blocked", blocked_node)
     graph.add_node("execute", execute_node)
@@ -271,7 +273,13 @@ def build_graph():
     graph.add_edge("fetch_price", "risk")
 
     graph.add_conditional_edges(
-        "risk", route_after_risk, {"blocked": "blocked", "decision": "decision"}
+        "risk", route_after_risk, {"blocked": "blocked", "rules_gate": "rules_gate"}
+    )
+
+    graph.add_conditional_edges(
+        "rules_gate",
+        route_after_rules_gate,
+        {"blocked": "blocked", "decision": "decision"},
     )
 
     graph.add_conditional_edges(
@@ -311,5 +319,6 @@ def analyze_ticker(
         "decision": None,
         "trade_result": None,
         "open_position_sectors": open_position_sectors,
+        "rules_score": None,
     }
     return trading_graph.invoke(initial_state)

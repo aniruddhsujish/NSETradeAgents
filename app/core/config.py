@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     # LLM
     anthropic_api_key: str
     tavily_api_key: str
+    use_llm_technical: bool = False
     llm_model_fast: str = "claude-haiku-4-5-20251001"
     llm_model_smart: str = "claude-sonnet-4-6"
 
@@ -32,6 +33,7 @@ class Settings(BaseSettings):
     max_hold_days: int = 21
     min_confidence: float = 0.68
     high_conviction_threshold: float = 0.80
+    rules_confidence_threshold: float = 50
 
     # Screener
     min_volume_ratio: float = 2.0
@@ -42,6 +44,24 @@ class Settings(BaseSettings):
     min_atr_pct: float = 1.5
     rsi_min: float = 55.0
     rsi_max: float = 70.0
+    regime_sma_period: int = 50
+
+    # Fundamental filters
+    min_market_cap: float = 5_00_00_00_000  # ₹500 Crore
+    max_debt_to_equity: float = 200.0        # yfinance returns as %, 200 = 2.0x
+    min_roe: float = 0.05
+    max_revenue_decline_pct: float = -0.10
+    max_pe_ratio: float = 100.0
+
+    # Scoring adjustments
+    vix_high_fear_level: float = 22.0
+    vix_medium_fear_level: float = 18.0
+    vix_high_fear_penalty: int = 20
+    vix_medium_fear_penalty: int = 10
+    nifty_20d_decline_threshold: float = -3.0
+    nifty_10d_decline_threshold: float = -2.0
+    round_number_levels: list[float] = Field(default=[500.0, 1000.0, 2000.0, 5000.0])
+    resistance_proximity_pct: float = 0.02
 
     # Trailing stop
     trail_activation_pct: float = 0.12

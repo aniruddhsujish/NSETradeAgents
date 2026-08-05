@@ -47,7 +47,7 @@ def test_empty_tickers_return_empty():
 def test_passes_all_filters():
     fake_df = make_fake_df()
 
-    with patch("app.screener.filters.yf.download") as mock_download, patch(
+    with patch("app.utils.market_data.safe_yf_download") as mock_download, patch(
         "app.screener.filters.compute_indicators", return_value=GOOD_INDICATORS
     ):
 
@@ -68,7 +68,7 @@ def test_blocked_by_trend():
         "sma200": 400.0,
     }  # Price below SMA50
 
-    with patch("app.screener.filters.yf.download") as mock_download, patch(
+    with patch("app.utils.market_data.safe_yf_download") as mock_download, patch(
         "app.screener.filters.compute_indicators", return_value=bad_indicators
     ):
 
@@ -82,7 +82,7 @@ def test_blocked_by_rsi_too_high():
     fake_df = make_fake_df()
     bad_indicators = {**GOOD_INDICATORS, "rsi": 72.0}  # RSI above max
 
-    with patch("app.screener.filters.yf.download") as mock_download, patch(
+    with patch("app.utils.market_data.safe_yf_download") as mock_download, patch(
         "app.screener.filters.compute_indicators", return_value=bad_indicators
     ):
 
@@ -96,7 +96,7 @@ def test_blocked_by_low_volume():
     fake_df = make_fake_df()
     bad_indicators = {**GOOD_INDICATORS, "volume_ratio": 1.5}  # Below min_volume_ratio
 
-    with patch("app.screener.filters.yf.download") as mock_download, patch(
+    with patch("app.utils.market_data.safe_yf_download") as mock_download, patch(
         "app.screener.filters.compute_indicators", return_value=bad_indicators
     ):
 
@@ -121,7 +121,7 @@ def test_ranking_order():
         "atr_pct": 1.5,
     }
 
-    with patch("app.screener.filters.yf.download") as mock_download, patch(
+    with patch("app.utils.market_data.safe_yf_download") as mock_download, patch(
         "app.screener.filters.compute_indicators"
     ) as mock_indicators:
 

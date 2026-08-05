@@ -1,8 +1,5 @@
-import warnings
 import requests
-import pandas as pd
 import pytz
-import yfinance as yf
 import structlog
 from datetime import datetime
 from functools import lru_cache
@@ -14,6 +11,7 @@ from app.core.logging import setup_logging
 from app.core.database import init_db
 from app.core.config import settings
 from app.portfolio.simulator import simulator
+from app.utils.market_data import safe_yf_download, extract_ticker_df
 
 setup_logging()
 logger = structlog.get_logger()
@@ -76,16 +74,7 @@ def review_positions() -> None:
     logger.info("position_review_start", tickers=tickers)
 
     try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            raw = yf.download(
-                tickers,
-                period="1d",
-                interval="5m",
-                group_by="ticker",
-                progress=False,
-                auto_adjust=True,
-            )
+        raw = safe_yf_download(tickers, period="1d", interval="5m", group_by="ticker")
     except Exception as e:
         logger.error("position_review_fetch_failed", error=str(e))
         return
@@ -99,12 +88,11 @@ def review_positions() -> None:
     for position in positions:
         ticker = position["ticker"]
         try:
-            if isinstance(raw.columns, pd.MultiIndex):
-                close_series = raw[ticker]["Close"]
-            else:
-                close_series = raw["Close"]
-
-            current_price = float(close_series.dropna().iloc[-1])
+            df = extract_ticker_df(raw, ticker)
+            if df is None:
+                logger.error("position_review_fetch_failed", ticker=ticker, error="ticker not in batch download")
+                continue
+            current_price = float(df["Close"].dropna().iloc[-1])
             live_prices[ticker] = current_price
         except Exception as e:
             logger.error("position_review_fetch_failed", ticker=ticker, error=str(e))
@@ -118,14 +106,14 @@ def review_positions() -> None:
         # Catastrophe protection - hybrid positions only
         # fires if price drops 15% below peak intraday (fraud, accident, major news etc) - bypasses normal trail and exits immediately to prevent large loss
         if hybrid_active and peak_price > 0:
-            catastophe_stop = peak_price * (1 - settings.trail_intraday_catastrophe_pct)
-            if current_price <= catastophe_stop:
+            catastrophe_stop = peak_price * (1 - settings.trail_intraday_catastrophe_pct)
+            if current_price <= catastrophe_stop:
                 logger.info(
                     "position_review_catastrophe_stop",
                     ticker=ticker,
                     price=current_price,
                     peak=peak_price,
-                    catastophe_stop=catastophe_stop,
+                    catastrophe_stop=catastrophe_stop,
                 )
                 simulator.close_trade(ticker, current_price, reason="catastrophe")
                 continue
@@ -189,16 +177,7 @@ def review_trail_eod() -> None:
     logger.info("trail_eod_start", tickers=tickers)
 
     try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            raw = yf.download(
-                tickers,
-                period="2d",
-                interval="1d",
-                group_by="ticker",
-                progress=False,
-                auto_adjust=True,
-            )
+        raw = safe_yf_download(tickers, period="2d", group_by="ticker")
     except Exception as e:
         logger.error("trail_eod_fetch_failed", error=str(e))
         return
@@ -212,11 +191,11 @@ def review_trail_eod() -> None:
     for position in positions:
         ticker = position["ticker"]
         try:
-            if isinstance(raw.columns, pd.MultiIndex):
-                close_series = raw[ticker]["Close"]
-            else:
-                close_series = raw["Close"]
-            close_price = float(close_series.dropna().iloc[-1])
+            df = extract_ticker_df(raw, ticker)
+            if df is None:
+                logger.error("trail_eod_fetch_failed", ticker=ticker, error="ticker not in batch download")
+                continue
+            close_price = float(df["Close"].dropna().iloc[-1])
         except Exception as e:
             logger.error("trail_eod_fetch_failed", ticker=ticker, error=str(e))
             continue
