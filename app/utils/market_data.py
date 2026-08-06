@@ -5,13 +5,13 @@ import yfinance as yf
 _OHLCV_FIELDS = frozenset({"Close", "Open", "High", "Low", "Volume", "Adj Close"})
 
 
-def safe_yf_download(ticker, period: str, interval: str = "1d", **kwargs) -> pd.DataFrame:
+def safe_yf_download(ticker, period: str | None = None, interval: str = "1d", **kwargs) -> pd.DataFrame:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        return yf.download(
-            ticker, period=period, interval=interval,
-            progress=False, auto_adjust=True, **kwargs
-        )
+        kw: dict = dict(interval=interval, progress=False, auto_adjust=True, **kwargs)
+        if period is not None:
+            kw["period"] = period
+        return yf.download(ticker, **kw)
 
 
 def extract_ticker_df(raw: pd.DataFrame, ticker: str) -> pd.DataFrame | None:
@@ -34,10 +34,12 @@ def extract_ticker_df(raw: pd.DataFrame, ticker: str) -> pd.DataFrame | None:
         return df
 
     if level0 & _OHLCV_FIELDS:
-        # Single-ticker download — field names are at level 0; just flatten
-        df = raw.copy()
-        df.columns = df.columns.get_level_values(0)
-        return df
+        # Field names are at level 0 — new yfinance batch format (fields at 0, tickers at 1)
+        # OR a single-ticker download with the same layout.
+        level1 = set(raw.columns.get_level_values(1))
+        if ticker in level1:
+            return raw.xs(ticker, level=1, axis=1).copy()
+        return None
 
     # Ticker not present in this batch download
     return None

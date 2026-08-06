@@ -127,6 +127,15 @@ The decision-agent rebuild. **Comes after Phase 2** because its entire justifica
 - **4.4 — Reflection memory with grading.** On every close: realized return + alpha vs Midcap 150, a reflection on outcome-vs-thesis, and a **grade on whether the stated kill_case materialized**. Retrieve past lessons by situation similarity into future veto/ranking calls. The decision records (1.3) are the dataset; this is how the news-reading veto gets validated forward.
 - **4.5 — Empirical reweighting.** After ~100 graded trades, fit a simple logistic regression (dimensions + veto + rank → outcome) and replace the hand-tuned `DIMENSION_SCORES`. The system learns its own weights from evidence.
 
+### Future LLM surface areas (evaluated, not yet scheduled)
+
+These are additional places an LLM adds genuine value over deterministic rules — i.e., reading unstructured text or reasoning about things that are hard to encode. Ordered by expected ROI:
+
+- **Earnings / events calendar.** The pipeline currently has zero awareness of upcoming binary events — earnings in 3 days, RBI policy, budget session. A blocking rule using NSE's announcements API is the deterministic fix (Phase 3.3); an LLM layer on top could read the announcement *context* ("beat consensus by 12%, guidance raised") for the veto. Either way, this is the biggest uncovered risk — a swing trade entered 2 days before results is a different trade.
+- **Promoter / bulk-deal activity.** BSE bulk-deal filings are public but unstructured. Large promoter selling while technicals look bullish is a classic trap. Already partially captured in Phase 4.2's "filings (promoter pledging)" bullet; the LLM reads recent bulk-deal disclosures and flags it as a veto kill-case. This is rewindable (filings are dated) so it backtests cleanly.
+- **Post-mortem calibration.** Already Phase 4.4. Calling it out here because it's the most defensible LLM use case in interviews: pure text synthesis from structured records, no market data required, graded by realized outcomes. After ~50 closed trades the decision records contain a dataset no deterministic function can summarise.
+- **Not prioritised:** deep financial statement analysis (too slow, swing-trade horizon doesn't need it), macro regime classification (high complexity, low signal for 1–4 week holds), generic sector news summary (covered by the veto).
+
 ---
 
 ## Phase 5 — Operations & resume layer ◻

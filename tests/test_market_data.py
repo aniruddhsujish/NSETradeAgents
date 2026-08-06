@@ -57,12 +57,37 @@ def test_single_ticker_multiindex_flattened():
     assert not isinstance(result.columns, pd.MultiIndex)
 
 
-def test_single_ticker_multiindex_unknown_ticker_still_flattened():
-    # Even if ticker doesn't match, single-ticker df should still flatten
+def test_single_ticker_multiindex_unknown_ticker_returns_none():
     raw = make_single_ticker_multiindex_df("TITAN.NS")
     result = extract_ticker_df(raw, "DIFFERENT.NS")
+    assert result is None
+
+
+def make_new_batch_df(tickers, n_rows=5):
+    """Simulate new yfinance batch format: MultiIndex (field, ticker)."""
+    fields = ["Close", "High", "Low", "Open", "Volume"]
+    arrays = [
+        fields * len(tickers),
+        [t for t in tickers for _ in fields],
+    ]
+    columns = pd.MultiIndex.from_arrays(arrays)
+    data = np.ones((n_rows, len(tickers) * len(fields))) * 100.0
+    return pd.DataFrame(data, columns=columns)
+
+
+def test_new_format_batch_extracts_correct_ticker():
+    raw = make_new_batch_df(["TITAN.NS", "RELIANCE.NS"])
+    result = extract_ticker_df(raw, "TITAN.NS")
     assert result is not None
-    assert "Close" in result.columns
+    assert not isinstance(result.columns, pd.MultiIndex)
+    for field in ["Close", "High", "Low", "Open", "Volume"]:
+        assert field in result.columns
+
+
+def test_new_format_batch_missing_ticker_returns_none():
+    raw = make_new_batch_df(["TITAN.NS", "RELIANCE.NS"])
+    result = extract_ticker_df(raw, "INFY.NS")
+    assert result is None
 
 
 # ── Flat DataFrame (no MultiIndex) ───────────────────────────────────────────
