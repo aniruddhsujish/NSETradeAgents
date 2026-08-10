@@ -5,7 +5,6 @@ from app.graph.state import TradingState
 from app.agents.fundamental import run_fundamental_check
 from app.agents.market_context import fetch_market_context
 from app.agents.technical import run_technical_analysis
-from app.agents.sentiment import run_sentiment_analysis
 from app.agents.risk import run_risk_check
 from app.core.config import settings
 from app.utils.scoring import compute_rules_confidence
@@ -78,19 +77,8 @@ def technical_node(state: TradingState) -> dict:
     return {"technical_signals": signals}
 
 
-def sentiment_node(state: TradingState) -> dict:
-    ctx = state.get("market_context") or {}
-    data = run_sentiment_analysis(
-        state["ticker"],
-        sector=ctx.get("sector", "Unknown"),
-        ticker_info=state.get("ticker_info"),
-    )
-    return {"sentiment_data": data}
-
-
 def risk_node(state: TradingState) -> dict:
     tech = state.get("technical_signals") or {}
-    sent = state.get("sentiment_data") or {}
     ctx = state.get("market_context") or {}
     atr_pct = (tech.get("indicators") or {}).get("atr_pct")
     result = run_risk_check(
@@ -99,7 +87,6 @@ def risk_node(state: TradingState) -> dict:
         portfolio_cash=state["portfolio_cash"],
         open_positions=state["open_positions"],
         technical_signal=tech.get("signal", "HOLD"),
-        sentiment_signal=sent.get("signal", "HOLD"),
         atr_pct=atr_pct,
         ticker_sector=ctx.get("sector", "Unknown"),
         open_position_sectors=state.get("open_position_sectors") or [],
@@ -189,7 +176,7 @@ def route_after_fundamental(state: TradingState) -> list[str]:
     result = state.get("fundamental_result") or {}
     if not result.get("approved", True):
         return ["blocked"]
-    return ["market_context", "technical", "sentiment"]
+    return ["market_context", "technical"]
 
 
 def route_after_risk(state: TradingState) -> str:
@@ -214,7 +201,6 @@ def build_graph():
     graph.add_node("fundamental", fundamental_node)
     graph.add_node("market_context", market_context_node)
     graph.add_node("technical", technical_node)
-    graph.add_node("sentiment", sentiment_node)
     graph.add_node("fetch_price", fetch_price_node)
     graph.add_node("risk", risk_node)
     graph.add_node("rules_gate", rules_gate_node)
@@ -228,10 +214,9 @@ def build_graph():
     graph.add_edge("fetch_data", "fundamental")
     graph.add_conditional_edges("fundamental", route_after_fundamental)
 
-    # Fan-in: all three -> fetch_price
+    # Fan-in: both parallel branches -> fetch_price
     graph.add_edge("market_context", "fetch_price")
     graph.add_edge("technical", "fetch_price")
-    graph.add_edge("sentiment", "fetch_price")
 
     # Sequential from here
     graph.add_edge("fetch_price", "risk")
@@ -274,7 +259,6 @@ def analyze_ticker(
         "market_context": None,
         "fundamental_result": None,
         "technical_signals": None,
-        "sentiment_data": None,
         "risk_result": None,
         "trade_result": None,
         "open_position_sectors": open_position_sectors,

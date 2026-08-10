@@ -23,7 +23,6 @@ def test_approved_happy_path():
         portfolio_cash=80000,
         open_positions=2,
         technical_signal="BUY",
-        sentiment_signal="BUY",
     )
 
     assert result["approved"] is True
@@ -40,25 +39,10 @@ def test_blocked_max_positions():
         portfolio_cash=80000,
         open_positions=4,  # At max positions
         technical_signal="BUY",
-        sentiment_signal="BUY",
     )
 
     assert result["approved"] is False
     assert any("max positions" in reason for reason in result["block_reasons"])
-
-
-def test_blocked_dual_sell():
-    result = run_risk_check(
-        ticker="TITAN.NS",
-        current_price=500.0,
-        portfolio_cash=80000,
-        open_positions=2,
-        technical_signal="SELL",
-        sentiment_signal="SELL",
-    )
-
-    assert result["approved"] is False
-    assert any("SELL" in reason for reason in result["block_reasons"])
 
 
 def test_blocked_price_too_high():
@@ -68,7 +52,6 @@ def test_blocked_price_too_high():
         portfolio_cash=80000,
         open_positions=2,
         technical_signal="BUY",
-        sentiment_signal="BUY",
     )
 
     assert result["approved"] is False
@@ -84,7 +67,6 @@ def test_blocked_invalid_price():
         portfolio_cash=80000,
         open_positions=2,
         technical_signal="BUY",
-        sentiment_signal="BUY",
     )
 
     assert result["approved"] is False
@@ -98,7 +80,6 @@ def test_approved_boundary_positions():
         portfolio_cash=80000,
         open_positions=3,  # One less than max positions
         technical_signal="BUY",
-        sentiment_signal="BUY",
     )
 
     assert result["approved"] is True

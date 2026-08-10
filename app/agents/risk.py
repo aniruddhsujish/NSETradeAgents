@@ -10,7 +10,6 @@ def run_risk_check(
     portfolio_cash: float,
     open_positions: int,
     technical_signal: str,
-    sentiment_signal: str,
     atr_pct: float | None = None,
     ticker_sector: str = "Unknown",
     open_position_sectors: list[str] | None = None,
@@ -38,11 +37,7 @@ def run_risk_check(
             f"max positions reached ({open_positions}/{settings.max_positions})"
         )
 
-    # Gate 2: both agents must be saying SELL
-    if technical_signal == "SELL" and sentiment_signal == "SELL":
-        block_reasons.append("both technical and sentiment signal are SELL")
-
-    # Gate 3: can we afford at least 1 share within position limits,
+    # Gate 2: can we afford at least 1 share within position limits,
     # and will the resulting position be meaningful (>= ₹5,000)?
     if current_price > max_position_value:
         block_reasons.append(
@@ -53,7 +48,7 @@ def run_risk_check(
             f"position size too small to be meaningful (₹{max_position_value:.0f} < ₹5,000)"
         )
 
-    # Gate 4: max 2 positions per sector to ensure diversification
+    # Gate 3: max 2 positions per sector to ensure diversification
     if ticker_sector != "Unknown" and open_position_sectors:
         sector_count = open_position_sectors.count(ticker_sector)
         if sector_count >= 2:

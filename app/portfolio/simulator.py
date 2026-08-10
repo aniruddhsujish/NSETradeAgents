@@ -53,7 +53,6 @@ class PortfolioSimulator:
         self,
         trade_result: dict,
         technical: dict,
-        sentiment: dict,
     ) -> Trade | None:
         ticker = trade_result["ticker"]
         logger.info("simulator_open_trade", ticker=ticker)
@@ -93,7 +92,6 @@ class PortfolioSimulator:
                 confidence=trade_result["confidence"],
                 reasoning=trade_result["reasoning"],
                 technical_summary=technical.get("summary"),
-                sentiment_summary=sentiment.get("summary"),
             )
             db.add(trade)
             db.flush()

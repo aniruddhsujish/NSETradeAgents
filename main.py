@@ -94,7 +94,6 @@ def run_scan():
             simulator.open_trade(
                 trade_result=trade_result,
                 technical=final_state.get("technical_signals") or {},
-                sentiment=final_state.get("sentiment_data") or {},
             )
 
     simulator.save_snapshot()

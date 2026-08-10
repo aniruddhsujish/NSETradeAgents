@@ -16,7 +16,7 @@ def patch_graph_settings(monkeypatch):
 def test_fundamental_approved_fans_out():
     state = {"fundamental_result": {"approved": True}}
     result = route_after_fundamental(state)
-    assert set(result) == {"market_context", "technical", "sentiment"}
+    assert set(result) == {"market_context", "technical"}
 
 
 def test_fundamental_blocked():
@@ -26,7 +26,7 @@ def test_fundamental_blocked():
 
 def test_fundamental_missing_result_fans_out():
     # No fundamental result → default approved=True
-    assert set(route_after_fundamental({})) == {"market_context", "technical", "sentiment"}
+    assert set(route_after_fundamental({})) == {"market_context", "technical"}
 
 
 # ── route_after_risk ──────────────────────────────────────────────────────────
