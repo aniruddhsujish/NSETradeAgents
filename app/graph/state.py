@@ -23,8 +23,8 @@ class TradingState(TypedDict):
     technical_signals: dict | None
     sentiment_data: dict | None
     risk_result: dict | None
-    decision: dict | None
 
     # Final
     trade_result: dict | None
     rules_score: int | None
+    rules_bands: dict | None

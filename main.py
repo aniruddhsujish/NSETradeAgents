@@ -72,8 +72,8 @@ def run_scan():
             continue
 
         trade_result = final_state.get("trade_result") or {}
-        decision = final_state.get("decision") or {}
         executed = trade_result.get("executed", False)
+        rules_score = final_state.get("rules_score")
 
         block_reasons = trade_result.get("reasons")
         block_reason = ", ".join(block_reasons) if block_reasons else None
@@ -82,19 +82,11 @@ def run_scan():
             db.add(
                 DecisionRecord(
                     ticker=ticker,
-                    action=trade_result.get("action")
-                    or decision.get("action")
-                    or "BLOCKED",
-                    confidence=decision.get("confidence"),
+                    action=trade_result.get("action") or "BLOCKED",
+                    confidence=rules_score,
                     executed=executed,
-                    signal_alignment=decision.get("signal_alignment"),
-                    entry_timing=decision.get("entry_timing"),
-                    momentum_quality=decision.get("momentum_quality"),
-                    risk_reward_view=decision.get("risk_reward_view"),
-                    setup_concern=decision.get("setup_concern"),
-                    kill_case=decision.get("kill_case"),
                     block_reason=block_reason,
-                    rules_score=final_state.get("rules_score"),
+                    rules_score=rules_score,
                     entry_price=trade_result.get("price") if executed else None,
                 )
             )

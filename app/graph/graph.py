@@ -7,9 +7,8 @@ from app.agents.market_context import fetch_market_context
 from app.agents.technical import run_technical_analysis
 from app.agents.sentiment import run_sentiment_analysis
 from app.agents.risk import run_risk_check
-from app.agents.decision import run_decision
 from app.core.config import settings
-from app.utils.scoring import compute_confidence, compute_rules_confidence
+from app.utils.scoring import compute_rules_confidence
 from app.utils.market_data import safe_yf_download
 
 logger = structlog.get_logger()
@@ -109,45 +108,27 @@ def risk_node(state: TradingState) -> dict:
 
 
 def rules_gate_node(state: TradingState) -> dict:
-    score = compute_rules_confidence(
+    result = compute_rules_confidence(
         technical=state.get("technical_signals") or {},
         risk=state.get("risk_result") or {},
         market_context=state.get("market_context"),
     )
-    logger.info("rules_gate", ticker=state["ticker"], rules_score=score)
-    return {"rules_score": score}
-
-
-def decision_node(state: TradingState) -> dict:
-    fundamental = state.get("fundamental_result") or {}
-    decision = run_decision(
-        ticker=state["ticker"],
-        current_price=state["current_price"],
-        technical=state.get("technical_signals") or {},
-        sentiment=state.get("sentiment_data") or {},
-        risk=state.get("risk_result") or {},
-        market_context=state.get("market_context"),
-        fundamental=fundamental,
-    )
-    if decision.get("action") == "BUY":
-        decision["confidence"] = compute_confidence(
-            decision, state.get("market_context")
-        )
-    else:
-        decision["confidence"] = 0
-
-    return {"decision": decision}
+    score = result.pop("score")
+    logger.info("rules_gate", ticker=state["ticker"], rules_score=score, **result)
+    return {"rules_score": score, "rules_bands": result}
 
 
 def blocked_node(state: TradingState) -> dict:
     fundamental = state.get("fundamental_result") or {}
     risk = state.get("risk_result") or {}
-    decision = state.get("decision") or {}
+    score = state.get("rules_score")
+    bands = state.get("rules_bands") or {}
     reasons = (
         fundamental.get("block_reasons")
         or risk.get("block_reasons")
         or [
-            f"Decision: {decision.get('action')} ({decision.get('confidence')}% confidence)"
+            f"Rules score {score} < {settings.rules_confidence_threshold:g} "
+            + ", ".join(f"{k}={v}" for k, v in bands.items())
         ]
     )
     logger.info("trade_blocked", ticker=state["ticker"], reasons=reasons)
@@ -165,20 +146,20 @@ def fetch_price_node(state: TradingState) -> dict:
 
 
 def execute_node(state: TradingState) -> dict:
-    decision = state.get("decision") or {}
     risk = state.get("risk_result") or {}
     market_ctx = state.get("market_context") or {}
     ticker = state["ticker"]
     tech = state.get("technical_signals") or {}
     atr_pct = (tech.get("indicators") or {}).get("atr_pct")
+    score = state.get("rules_score")
 
     logger.info(
         "trade_execute",
         ticker=ticker,
-        action=decision.get("action"),
+        action="BUY",
         quantity=risk.get("quantity"),
         price=state["current_price"],
-        confidence=decision.get("confidence"),
+        rules_score=score,
         simulation=settings.simulation_mode,
     )
 
@@ -198,8 +179,8 @@ def execute_node(state: TradingState) -> dict:
             "stop_loss": risk.get("stop_loss"),
             "take_profit": risk.get("take_profit"),
             "atr_pct": atr_pct,
-            "confidence": decision.get("confidence"),
-            "reasoning": decision.get("reasoning"),
+            "confidence": score,
+            "reasoning": (tech.get("summary") or ""),
         }
     }
 
@@ -212,7 +193,7 @@ def route_after_fundamental(state: TradingState) -> list[str]:
 
 
 def route_after_risk(state: TradingState) -> str:
-    """If risk blocked, skip decision entirely"""
+    """If risk blocked, skip scoring entirely"""
     risk = state.get("risk_result") or {}
     if not risk.get("approved"):
         return "blocked"
@@ -221,20 +202,6 @@ def route_after_risk(state: TradingState) -> str:
 
 def route_after_rules_gate(state: TradingState) -> str:
     if (state.get("rules_score") or 0) < settings.rules_confidence_threshold:
-        return "blocked"
-    return "decision"
-
-
-def route_after_decision(state: TradingState) -> str:
-    """If decision is not BUY or confidence too low, block."""
-    decision = state.get("decision") or {}
-    if decision.get("action") != "BUY":
-        return "blocked"
-
-    if state.get("open_positions", 0) >= settings.max_positions - 1:
-        if decision.get("confidence", 0) < settings.high_conviction_threshold * 100:
-            return "blocked"
-    elif decision.get("confidence", 0) < settings.min_confidence * 100:
         return "blocked"
     return "execute"
 
@@ -251,7 +218,6 @@ def build_graph():
     graph.add_node("fetch_price", fetch_price_node)
     graph.add_node("risk", risk_node)
     graph.add_node("rules_gate", rules_gate_node)
-    graph.add_node("decision", decision_node)
     graph.add_node("blocked", blocked_node)
     graph.add_node("execute", execute_node)
 
@@ -277,11 +243,7 @@ def build_graph():
     graph.add_conditional_edges(
         "rules_gate",
         route_after_rules_gate,
-        {"blocked": "blocked", "decision": "decision"},
-    )
-
-    graph.add_conditional_edges(
-        "decision", route_after_decision, {"blocked": "blocked", "execute": "execute"}
+        {"blocked": "blocked", "execute": "execute"},
     )
 
     graph.add_edge("blocked", END)
@@ -314,9 +276,9 @@ def analyze_ticker(
         "technical_signals": None,
         "sentiment_data": None,
         "risk_result": None,
-        "decision": None,
         "trade_result": None,
         "open_position_sectors": open_position_sectors,
         "rules_score": None,
+        "rules_bands": None,
     }
     return trading_graph.invoke(initial_state)

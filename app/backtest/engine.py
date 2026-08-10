@@ -326,8 +326,9 @@ def run_backtest(
                             "take_profit": est * (1 + settings.take_profit_pct),
                         },
                         mkt_ctx,
-                    )
-                except Exception:
+                    )["score"]
+                except Exception as e:
+                    logger.warning("score_failed", ticker=ticker, day=day, error=str(e))
                     continue
                 all_scores.append(score)
 

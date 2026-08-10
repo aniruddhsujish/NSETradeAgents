@@ -344,6 +344,16 @@ bias §3 documents.
    snapshot — used live, skipped in backtest.
 5. **Sector context absent in backtest**, so concentration limits bind live but
    not historically.
+6. **Relative strength is a live-only signal — accepted knowingly.** `market_regime`
+   scores from four warnings live but only three in backtest, because
+   `engine.py` hardcodes `sector_day_pct = 0.0` and `divergence_note = ""`. So the
+   weak-sector warning and the relative-strength cancellation that answers it
+   both fire live and never in backtest. Kept on the reasoning that a stock
+   rising while its sector falls shows stock-specific demand rather than beta —
+   but it is unvalidated, and it is a live/backtest divergence of the same shape
+   as the sentiment one removed in Phase A. Proper fix is point-in-time sector
+   indices (see limitation 5); until then, treat any regime-driven result as
+   measured on three-quarters of its live inputs.
 
 ---
 

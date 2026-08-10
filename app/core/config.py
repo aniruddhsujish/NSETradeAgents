@@ -30,9 +30,7 @@ class Settings(BaseSettings):
     stop_loss_pct: float = 0.07
     take_profit_pct: float = 0.18
     max_hold_days: int = 21
-    min_confidence: float = 0.68
-    high_conviction_threshold: float = 0.80
-    rules_confidence_threshold: float = 32
+    rules_confidence_threshold: float = 65
 
     # Screener
     min_volume_ratio: float = 2.0
