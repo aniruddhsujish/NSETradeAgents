@@ -10,7 +10,6 @@ class Settings(BaseSettings):
     # LLM
     anthropic_api_key: str
     tavily_api_key: str
-    use_llm_technical: bool = False
     llm_model_fast: str = "claude-haiku-4-5-20251001"
     llm_model_smart: str = "claude-sonnet-4-6"
 
@@ -33,7 +32,7 @@ class Settings(BaseSettings):
     max_hold_days: int = 21
     min_confidence: float = 0.68
     high_conviction_threshold: float = 0.80
-    rules_confidence_threshold: float = 50
+    rules_confidence_threshold: float = 32
 
     # Screener
     min_volume_ratio: float = 2.0
@@ -48,7 +47,7 @@ class Settings(BaseSettings):
 
     # Fundamental filters
     min_market_cap: float = 5_00_00_00_000  # ₹500 Crore
-    max_debt_to_equity: float = 200.0        # yfinance returns as %, 200 = 2.0x
+    max_debt_to_equity: float = 200.0  # yfinance returns as %, 200 = 2.0x
     min_roe: float = 0.05
     max_revenue_decline_pct: float = -0.10
     max_pe_ratio: float = 100.0

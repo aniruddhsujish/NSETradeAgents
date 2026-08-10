@@ -44,15 +44,15 @@ class ClosedTrade:
 
 
 def _check_exit(pos: Position, bar: pd.Series, today: date) -> tuple[float, str] | None:
-    open_p  = float(bar["Open"])
-    high_p  = float(bar["High"])
-    low_p   = float(bar["Low"])
+    open_p = float(bar["Open"])
+    high_p = float(bar["High"])
+    low_p = float(bar["Low"])
     close_p = float(bar["Close"])
 
     effective_stop = pos.trail_stop if pos.trail_stop > 0 else pos.stop_price
-    stop_hit   = low_p <= effective_stop
+    stop_hit = low_p <= effective_stop
     target_hit = (not pos.hybrid_active) and high_p >= pos.target_price
-    days_held  = (today - pos.entry_date).days
+    days_held = (today - pos.entry_date).days
 
     if stop_hit and target_hit:
         return min(open_p, effective_stop), "stop"
@@ -225,7 +225,10 @@ def run_backtest(
                 continue
 
             trail_pct = (
-                min(max(2.0 * pos.atr_pct / 100, settings.trail_min_pct), settings.trail_max_pct)
+                min(
+                    max(2.0 * pos.atr_pct / 100, settings.trail_min_pct),
+                    settings.trail_max_pct,
+                )
                 if pos.atr_pct > 0
                 else settings.trail_min_pct
             )
@@ -233,7 +236,11 @@ def run_backtest(
             new_trail = max(new_trail, pos.stop_price)  # never trail below initial stop
             pos.trail_stop = new_trail
 
-            if hybrid_mode and not pos.hybrid_active and hybrid_count < settings.max_hybrid_positions:
+            if (
+                hybrid_mode
+                and not pos.hybrid_active
+                and hybrid_count < settings.max_hybrid_positions
+            ):
                 pos.hybrid_active = True
                 hybrid_count += 1
 
@@ -314,7 +321,6 @@ def run_backtest(
                 try:
                     score = compute_rules_confidence(
                         {"signal": "BUY", "indicators": ind},
-                        {"signal": "HOLD", "score": 0},
                         {
                             "stop_loss": est * (1 - settings.stop_loss_pct),
                             "take_profit": est * (1 + settings.take_profit_pct),
@@ -326,16 +332,20 @@ def run_backtest(
                 all_scores.append(score)
 
                 if score >= settings.rules_confidence_threshold:
-                    vol_norm      = min(ind["volume_ratio"] / 5.0, 1.0)
+                    vol_norm = min(ind["volume_ratio"] / 5.0, 1.0)
                     momentum_norm = min(max(ind["momentum_5d"], -15), 15) / 15
-                    atr_norm      = min(ind["atr_pct"] / 5.0, 1.0)
-                    screener_score = (vol_norm * 0.40) + (momentum_norm * 0.35) + (atr_norm * 0.25)
-                    signal_candidates.append({
-                        "ticker": ticker,
-                        "score": score,
-                        "screener_score": screener_score,
-                        "atr_pct": ind["atr_pct"],
-                    })
+                    atr_norm = min(ind["atr_pct"] / 5.0, 1.0)
+                    screener_score = (
+                        (vol_norm * 0.40) + (momentum_norm * 0.35) + (atr_norm * 0.25)
+                    )
+                    signal_candidates.append(
+                        {
+                            "ticker": ticker,
+                            "score": score,
+                            "screener_score": screener_score,
+                            "atr_pct": ind["atr_pct"],
+                        }
+                    )
 
             signal_candidates.sort(key=lambda x: x["screener_score"], reverse=True)
             pending_entries = signal_candidates[:capacity]

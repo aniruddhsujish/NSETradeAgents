@@ -2,7 +2,6 @@ import pytest
 from app.utils.scoring import (
     compute_confidence,
     compute_rules_confidence,
-    _rules_signal_alignment,
     _rules_entry_timing,
     _rules_momentum_quality,
     _rules_risk_reward,
@@ -22,18 +21,21 @@ def patch_scoring_settings(monkeypatch):
     monkeypatch.setattr("app.utils.scoring.settings.vix_medium_fear_penalty", 10)
     monkeypatch.setattr("app.utils.scoring.settings.nifty_20d_decline_threshold", -3.0)
     monkeypatch.setattr("app.utils.scoring.settings.nifty_10d_decline_threshold", -2.0)
-    monkeypatch.setattr("app.utils.scoring.settings.round_number_levels", [500.0, 1000.0, 2000.0, 5000.0])
+    monkeypatch.setattr(
+        "app.utils.scoring.settings.round_number_levels",
+        [500.0, 1000.0, 2000.0, 5000.0],
+    )
     monkeypatch.setattr("app.utils.scoring.settings.resistance_proximity_pct", 0.02)
 
 
 # ── Shared fixtures ───────────────────────────────────────────────────────────
 
 BEST_DECISION = {
-    "signal_alignment": "STRONG",      # 30
-    "entry_timing": "IDEAL",           # 25
-    "momentum_quality": "STRONG",      # 20
-    "risk_reward_view": "FAVORABLE",   # 15
-    "setup_concern": "NONE",           # 10
+    "signal_alignment": "STRONG",  # 30
+    "entry_timing": "IDEAL",  # 25
+    "momentum_quality": "STRONG",  # 20
+    "risk_reward_view": "FAVORABLE",  # 15
+    "setup_concern": "NONE",  # 10
 }  # base = 100
 
 NEUTRAL_CTX = {
@@ -55,26 +57,8 @@ GOOD_TIMING_IND = {
 }
 
 
-# ── _rules_signal_alignment ───────────────────────────────────────────────────
-
-def test_alignment_strong():
-    assert _rules_signal_alignment("BUY", "BUY", 35) == "STRONG"
-
-
-def test_alignment_acceptable_neutral_sentiment():
-    assert _rules_signal_alignment("BUY", "HOLD", 10) == "ACCEPTABLE"
-
-
-def test_alignment_conflicted_tech_not_buy():
-    assert _rules_signal_alignment("HOLD", "BUY", 50) == "CONFLICTED"
-
-
-def test_alignment_conflicted_very_negative_sentiment():
-    # BUY tech but sentiment score -25 (< -20 threshold)
-    assert _rules_signal_alignment("BUY", "BUY", -25) == "CONFLICTED"
-
-
 # ── _rules_entry_timing ───────────────────────────────────────────────────────
+
 
 def test_entry_timing_ideal():
     assert _rules_entry_timing(GOOD_TIMING_IND) == "IDEAL"
@@ -105,6 +89,7 @@ def test_entry_timing_poor_macd_not_rising():
 
 
 # ── _rules_momentum_quality ───────────────────────────────────────────────────
+
 
 def test_momentum_quality_strong():
     ind = {"rsi": 64.0, "macd_hist_trend": "expanding", "momentum_5d": 5.0}
@@ -143,9 +128,12 @@ def test_momentum_quality_moderate():
 
 # ── _rules_risk_reward ────────────────────────────────────────────────────────
 
+
 def test_risk_reward_favorable():
     # R:R = (650 - 500) / (500 - 450) = 3.0, >= 2.5
-    assert _rules_risk_reward({"stop_loss": 450, "take_profit": 650}, 500) == "FAVORABLE"
+    assert (
+        _rules_risk_reward({"stop_loss": 450, "take_profit": 650}, 500) == "FAVORABLE"
+    )
 
 
 def test_risk_reward_neutral():
@@ -155,7 +143,9 @@ def test_risk_reward_neutral():
 
 def test_risk_reward_unfavorable():
     # R:R = (540 - 500) / (500 - 450) = 0.8, < 1.5
-    assert _rules_risk_reward({"stop_loss": 450, "take_profit": 540}, 500) == "UNFAVORABLE"
+    assert (
+        _rules_risk_reward({"stop_loss": 450, "take_profit": 540}, 500) == "UNFAVORABLE"
+    )
 
 
 def test_risk_reward_missing_stop_loss():
@@ -168,6 +158,7 @@ def test_risk_reward_price_at_or_below_stop():
 
 
 # ── compute_confidence ────────────────────────────────────────────────────────
+
 
 def test_compute_confidence_perfect_setup():
     # 30 + 25 + 20 + 15 + 10 = 100
@@ -213,13 +204,15 @@ def test_compute_confidence_relative_strength_bonus():
     # Use a sub-100 base decision so bonus has room
     decision = {
         "signal_alignment": "ACCEPTABLE",  # 18
-        "entry_timing": "IDEAL",           # 25
-        "momentum_quality": "STRONG",      # 20
-        "risk_reward_view": "FAVORABLE",   # 15
-        "setup_concern": "NONE",           # 10
+        "entry_timing": "IDEAL",  # 25
+        "momentum_quality": "STRONG",  # 20
+        "risk_reward_view": "FAVORABLE",  # 15
+        "setup_concern": "NONE",  # 10
     }  # base = 88
     score_without = compute_confidence(decision, NEUTRAL_CTX)
-    score_with = compute_confidence(decision, {**NEUTRAL_CTX, "divergence_note": "relative strength divergence"})
+    score_with = compute_confidence(
+        decision, {**NEUTRAL_CTX, "divergence_note": "relative strength divergence"}
+    )
     assert score_without == 88
     assert score_with == 98
 
@@ -227,11 +220,11 @@ def test_compute_confidence_relative_strength_bonus():
 def test_compute_confidence_strong_momentum_late_entry_penalty():
     # STRONG momentum + ACCEPTABLE timing → extra -15
     decision = {
-        "signal_alignment": "STRONG",    # 30
-        "entry_timing": "ACCEPTABLE",    # 15, but triggers penalty
-        "momentum_quality": "STRONG",    # 20
-        "risk_reward_view": "FAVORABLE", # 15
-        "setup_concern": "NONE",         # 10
+        "signal_alignment": "STRONG",  # 30
+        "entry_timing": "ACCEPTABLE",  # 15, but triggers penalty
+        "momentum_quality": "STRONG",  # 20
+        "risk_reward_view": "FAVORABLE",  # 15
+        "setup_concern": "NONE",  # 10
     }  # base = 90, -15 = 75
     assert compute_confidence(decision, NEUTRAL_CTX) == 75
 
@@ -256,6 +249,11 @@ def test_compute_confidence_clamped_at_zero():
         "risk_reward_view": "UNFAVORABLE",
         "setup_concern": "SIGNIFICANT",
     }
-    ctx = {**NEUTRAL_CTX, "nifty_day_pct": -2.0, "india_vix": 25.0,
-           "nifty_20d_pct": -5.0, "nifty_10d_pct": -3.0}
+    ctx = {
+        **NEUTRAL_CTX,
+        "nifty_day_pct": -2.0,
+        "india_vix": 25.0,
+        "nifty_20d_pct": -5.0,
+        "nifty_10d_pct": -3.0,
+    }
     assert compute_confidence(decision, ctx) == 0

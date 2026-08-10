@@ -74,7 +74,6 @@ def market_context_node(state: TradingState) -> dict:
 def technical_node(state: TradingState) -> dict:
     signals = run_technical_analysis(
         state["ticker"],
-        market_context=state.get("market_context"),
         ticker_df=state.get("ticker_df"),
     )
     return {"technical_signals": signals}
@@ -112,7 +111,6 @@ def risk_node(state: TradingState) -> dict:
 def rules_gate_node(state: TradingState) -> dict:
     score = compute_rules_confidence(
         technical=state.get("technical_signals") or {},
-        sentiment=state.get("sentiment_data") or {},
         risk=state.get("risk_result") or {},
         market_context=state.get("market_context"),
     )
@@ -233,7 +231,7 @@ def route_after_decision(state: TradingState) -> str:
     if decision.get("action") != "BUY":
         return "blocked"
 
-    if state.get("open_positions", 0) >= 4:
+    if state.get("open_positions", 0) >= settings.max_positions - 1:
         if decision.get("confidence", 0) < settings.high_conviction_threshold * 100:
             return "blocked"
     elif decision.get("confidence", 0) < settings.min_confidence * 100:

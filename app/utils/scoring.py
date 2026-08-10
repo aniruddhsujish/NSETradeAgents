@@ -64,18 +64,6 @@ def compute_confidence(decision: dict, market_context: dict | None = None) -> in
     return max(0, min(100, score))
 
 
-def _rules_signal_alignment(
-    tech_signal: str, sent_signal: str, sent_score: float
-) -> str:
-    if tech_signal != "BUY":
-        return "CONFLICTED"
-    if sent_signal == "BUY" and sent_score > 20:
-        return "STRONG"
-    if sent_score < -20:
-        return "CONFLICTED"
-    return "ACCEPTABLE"
-
-
 def _rules_entry_timing(ind: dict) -> str:
     rsi = ind.get("rsi", 50)
     macd_hist = ind.get("macd_hist", 0)
@@ -89,7 +77,10 @@ def _rules_entry_timing(ind: dict) -> str:
     if volume_ratio < 1.5:
         return "POOR"
     for level in settings.round_number_levels:
-        if current_price > 0 and abs(current_price - level) / level < settings.resistance_proximity_pct:
+        if (
+            current_price > 0
+            and abs(current_price - level) / level < settings.resistance_proximity_pct
+        ):
             return "POOR"
 
     conditions = [
@@ -136,17 +127,12 @@ def _rules_risk_reward(risk: dict, current_price: float) -> str:
 
 
 def compute_rules_confidence(
-    technical: dict, sentiment: dict, risk: dict, market_context: dict | None = None
+    technical: dict, risk: dict, market_context: dict | None = None
 ) -> int:
     ind = technical.get("indicators") or {}
     current_price = ind.get("current_price", 0)
 
     rules_decision = {
-        "signal_alignment": _rules_signal_alignment(
-            technical.get("signal", "HOLD"),
-            sentiment.get("signal", "HOLD"),
-            sentiment.get("score", 0),
-        ),
         "entry_timing": _rules_entry_timing(ind),
         "momentum_quality": _rules_momentum_quality(ind),
         "risk_reward_view": _rules_risk_reward(risk, current_price),
