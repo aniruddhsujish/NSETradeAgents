@@ -1,384 +1,381 @@
 # NSETradeAgents — Plan of Record
 
-> The plan for turning this from a working swing-trade bot into (a) a defensible
-> multi-agent system and (b) a strategy worth funding. Doubles as the syllabus:
-> each phase names the orchestration concepts it teaches.
+> The plan for turning a working swing-trade bot into (a) a defensible multi-agent
+> system and (b) a strategy worth funding. Doubles as the syllabus: each phase
+> names the orchestration concepts it teaches.
 >
-> **Scope note:** This document describes **`main`** and only `main`. An earlier
-> attempt at a unified engine lives on branch `redesign-decicision-agent` and is
-> **abandoned** — do not plan against it. (Stale `.pyc` files under
-> `app/engine/__pycache__` and `app/data/__pycache__` are debris from it; there
-> are no `.py` sources on `main`.)
+> **Scope:** describes branch `veto-agent`, cut from `main`. The older
+> `redesign-decicision-agent` branch is **abandoned** — do not plan against it.
+> Stale `.pyc` files under `app/engine/` and `app/data/` are debris from it.
 
 ---
 
 ## 1. Goals
 
-1. **Learn multi-agent orchestration.** This project is the vehicle. Concepts get
-   built by hand, not imported wholesale.
-2. **A resume piece that survives scrutiny.** Specifically a multi-agent system
-   that uses LangGraph and can *justify* the framework — see §5.
-3. **Eventually, a real edge worth real capital.** This raises the bar on
-   measurement in ways goals 1 and 2 don't (§3).
-
-Goals 2 and 3 point the same direction: the strongest artifact this project can
-produce is an honest ablation study — *does the LLM actually add alpha?* — and
-that study **is** the measurement harness's output. Building the measuring stick
-is not a detour from the resume goal. It is the resume goal.
+1. **Learn multi-agent orchestration.** This project is the vehicle; concepts get
+   built by hand.
+2. **A resume piece that survives scrutiny** — a multi-agent system that uses
+   LangGraph and can *justify* the framework (§5).
+3. **Eventually, a real edge worth real capital.**
 
 ---
 
-## 2. Where things actually stand
+## 2. Where things stand
 
-### What runs today
+### Current pipeline — fully deterministic, zero LLM calls
 
-**Live path** — `main.py`
-```
-fetch_universe() → filters.screen() → for each candidate: analyze_ticker() → simulator
-```
-
-**The graph** — `app/graph/graph.py`
 ```
 START → fetch_data → fundamental ─[blocked]→ blocked → END
-                                 └[approved]→ ┌ market_context ┐
-                                              ├ technical      ├→ fetch_price → risk
-                                              └ sentiment      ┘
+                                 └[ok]→ ┌ market_context ┐
+                                        └ technical      ┴→ fetch_price → risk
 risk ─[blocked]→ blocked
-     └[ok]→ rules_gate ─[score < 50]→ blocked
-                       └[score ≥ 50]→ decision (LLM) ─[not BUY / conf < 68]→ blocked
-                                                     └[BUY]→ execute → END
+     └[ok]→ rules_gate ─[score < 65]→ blocked
+                       └[score ≥ 65]→ execute → END
 ```
 
-**Backtest path** — `app/backtest/engine.py`, a **separate implementation** that
-re-derives the same logic in a day loop. CLI: `python backtest.py`.
+`langchain-anthropic` is no longer imported anywhere in `app/`. This is deliberate:
+it is the honest "before" that every LLM addition gets measured against.
 
-### Baseline numbers (2022–2025, ₹2L, rules-only)
+### Baseline (2022–2025, ₹2L, threshold 65)
 
 | Metric | Value |
 |---|---|
-| Total return | +83.3% |
-| CAGR | +16.4% |
-| Sharpe | 1.41 |
-| Max drawdown | 12.6% |
-| Trades / win rate | 232 / 50.9% |
-| Profit factor | 1.59 |
-| Avg hold | 18.9 days |
+| Total return | +82.6% |
+| CAGR | +16.3% |
+| Sharpe | 1.38 |
+| Max drawdown | 12.9% |
+| Trades / win rate | 235 / 49.8% |
+| Profit factor | 1.51 |
 
-Exit mix: **stop 72 · target 17 · timeout 108 · trail 35**
+Exits: **stop 80 · target 17 · timeout 110 · trail 28**
 
-Year-by-year: 2022 **+33.5%** · 2023 **+33.0%** · 2024 **+8.7%** · 2025 **−6.6%**
+### Scoring — four banded dimensions, exactly 100 points
 
-### The three problems
-
-**Problem 1 — The LLM layer is redundant and unmeasured.**
-
-`rules_gate` (`graph.py:112`) calls `compute_rules_confidence()`, which derives
-the five dimensions deterministically from indicators and scores them through
-`compute_confidence()`. Then `decision` (`graph.py:123`) asks Sonnet to produce
-**those same five dimensions**, scored by **the same function**. The LLM
-re-derives arithmetic the computer already did — a calculator in a costume.
-
-Worse: the +83.3% baseline **never invoked the LLM**. `engine.py:315` calls
-`compute_rules_confidence` and stops. So the validated strategy is the
-deterministic core, and the entire LLM layer sits on top contributing an unknown
-amount — possibly negative.
-
-> The one hint available is not encouraging: an older backtest of the
-> LLM-in-the-loop system returned **+36.8%** (Jan 2023–Dec 2025). Different
-> period *and* different code, so not a clean comparison — but it is not
-> evidence the LLM helps, either. Settling this is Phase A's job.
-
-**Problem 2 — Backtest ≠ live, and they've already drifted.**
-
-The backtester re-implements rather than reuses. All eight screener filters are
-inlined at `engine.py:290-311`, duplicating `filters.py:76-121`; exits, regime
-gate, and market context likewise. A concrete drift already exists:
-`_rules_signal_alignment` (`scoring.py:67`) consumes sentiment, but the
-backtest hardcodes `{"signal": "HOLD", "score": 0}` → always `ACCEPTABLE`
-(18 pts), while live sentiment can yield `STRONG` (30) or `CONFLICTED` (0).
-**The same setup scores up to 30 points differently depending on which code path
-you're in.** The backtested threshold of 50 therefore does not mean the same
-thing live.
-
-**Problem 3 — 47% of trades are dead money.** 108 of 232 exits are the 21-day
-timeout: bought, held three weeks, closed mechanically for roughly nothing.
-That is the largest single pool of wasted capital in the system.
+`entry_timing` 30/18/0 · `momentum_quality` 25/15/0 · `risk_reward_view` 20/12/0 ·
+`market_regime` 25/15/0. Nothing subtractive; no clamp needed.
+`compute_rules_confidence` returns the score **and the bands**, so callers can
+record *why* a candidate scored what it did.
 
 ---
 
-## 3. What "real money" demands that a toy doesn't
+## 3. What we learned that changed the plan
 
-The +83.3% is **in-sample, gross, and survivorship-biased**. Specifically:
+**The score barely predicts outcomes.** Buckets are non-monotonic — the 80–100
+bucket had the *worst* average P&L (−0.18%). A threshold sweep gave
+32→+71%, 50→+49%, 60→+61%, 65→+83%, 70→+88%: a wobble, not a trend, with ~25
+trades separating the extremes.
 
-1. **In-sample.** The git history is a record of fitting parameters to backtest
-   output — `fc3fbb7` (revert RSI thresholds, add a momentum/entry-timing
-   penalty), `3e1eab4` ("improvements from backtest results"), `3a1a928`
-   (stop-loss cap). There is currently **no held-out period**, so there is zero
-   out-of-sample evidence.
-2. **Gross.** `engine.py` models no STT, no brokerage, no slippage. On
-   smallcap/midcap names, across 232 round trips, this is not a rounding error.
-3. **Survivorship-biased.** Universe seeded from *today's* constituents;
-   delisted names — disproportionately losers — are absent.
+Interpretation: **the screener does the real selection work.** A rubric that
+re-reads the same indicators adds little. This is the argument for the veto
+bringing *different* information — and the argument against adding more
+arithmetic over the same inputs.
 
-None of this makes the strategy bad. It means the honest number is unknown and
-lower. Correcting it is cheap, and *"I found my own backtest was inflated and
-fixed it"* is a stronger interview story than a large number that can't be
-defended.
+**LLM alpha cannot be backtested here.** Two independent reasons: no
+point-in-time news archive, and the model was trained on the outcome window. So
+LLM contribution is validated **forward, by grading**, not by backtest. That is
+accepted, not worked around.
+
+**Chart-structure detection is not an LLM job.** Resistance walls, gaps, and
+block-deal volume are all computable in ~20 lines. Handing an LLM 300 numbers to
+find them is the calculator-in-a-costume error in new clothes. If built, they are
+deterministic features — and their alpha case is unproven, so they are deferred.
+
+**The backtest is still valuable — for the deterministic track.** Its job changed:
+not validating agents, but validating strategy fixes. That is where the evidence
+actually points (110 timeout exits, no compounding, a binary regime gate).
+
+### The exit distribution diagnoses the strategy
+
+**stop 80 · target 17 · timeout 110 · trail 28.** Only ~19% of trades (target +
+trail) win meaningfully; profit factor 1.51 says the entire edge lives in those.
+
+The cause is that **stop and target are mis-scaled to volatility.** The stop is
+`2.5 × ATR%` (floor 5%, cap 10%); the target is a flat **18%**. For a typical
+2.5%-ATR candidate:
+
+- stop sits ≈ **2.5 daily ranges** below entry
+- target sits ≈ **7 daily ranges** above entry
+- 21 days of random walk covers ≈ √21 ≈ **4.6 daily ranges**
+
+So noise alone reaches the stop comfortably and rarely reaches the target. The
+paper R:R of 2.9:1 is illusory: **the stop is inside the noise band and the
+target is outside the plausible range.** 80 stops against 17 targets is exactly
+that signature, and the 110 timeouts are trades drifting toward a target that was
+never reachable.
+
+**Second diagnosis — entries buy the top of the pop.** The signal fires on a
+close with `day_change > 0.5%` and `volume ≥ 2×`, and the order goes in at the
+*next open* — frequently the local high, often a gap up. That is what feeds the
+stop count.
+
+**Third — absolute momentum is the wrong screen for a downtape.** `momentum_5d ≥
+2.0` is measured against zero, so in a falling market it either finds nothing
+(the dead months) or finds the few things pumping, which in a downtape skew
+toward junk and reversals. 2025's 36.8% win rate is that failure.
+
+The two levers that follow: **kill the dead 47% faster** and **make the winning
+19% bigger.** The trailing stop already does the second; most of Phase B is the
+first.
 
 ---
 
 ## 4. Principles
 
-1. **Backtest == live.** One source of truth per rule. Duplication drifts; it
-   already has.
+1. **Backtest == live.** One source of truth per rule. Duplication drifts — it
+   already did once, via sentiment.
 2. **LLM only where it reads text or exercises judgment** — never where a
-   function computes the answer.
-3. **Deterministic core, gradeable LLM edges.** The LLM's contribution must be
-   isolatable and measurable as a delta.
-4. **Measure before believing.** Every LLM change beats a rules-only baseline on
-   the harness, or it doesn't ship.
-5. **LangGraph must earn its place** (§5) — not be decoration.
-6. **The user writes the code.** This is a learning project; guidance and review,
-   not delivery.
+   function can compute the answer.
+3. **Deterministic core, gradeable LLM edges.**
+4. **Records before agents.** A decision you did not capture is one you can never
+   grade, and grading is now the only validation path.
+5. **Measure what can be measured; forward-test the rest, and say which is which.**
+6. **LangGraph must earn its place** (§5).
+7. **The user writes the code.** Guidance and review, not delivery.
 
 ---
 
-## 5. The LangGraph justification problem
+## 5. The LangGraph justification
 
-State it plainly: **the current graph does not justify LangGraph.** It is a
-linear pipeline with a single fan-out of three independent nodes. It would be
-~30 lines of plain Python. Adding a veto node doesn't fix that — it's one more
-box in the same straight line. Anyone who knows the framework will notice.
+Stated plainly: **the current graph does not justify LangGraph.** It is a linear
+pipeline with one fan-out of two independent nodes — ~30 lines of plain Python.
+Adding a veto node does not fix that; it is one more box in the same line.
 
-Four things genuinely require it, and the plan below builds all four:
+Four things genuinely require the framework, and the plan builds all four:
 
-| Capability | Where it lands |
+| Capability | Lands in |
 |---|---|
-| **Checkpointed durable threads** — each open position is a graph thread resumed daily, carrying its own accumulated history | Phase B3 |
-| **Cycles** — reflection → lesson → retrieved into future decisions is a loop, not a DAG | Phase B4 |
-| **Tool-calling subgraphs** — the veto gathers evidence in its own inner loop | Phase B2 |
-| **Human-in-the-loop `interrupt()`** — approval gate before live orders | Phase D |
+| **Checkpointed durable threads** — each open position is a thread resumed daily with its own accumulated history | C2 |
+| **Cycles** — reflection → lesson → retrieved into future decisions is a loop, not a DAG | C3 |
+| **Tool-calling subgraphs** — the veto gathers evidence in its own inner loop | C1 |
+| **Human-in-the-loop `interrupt()`** — approval gate before live orders | D3 |
 
 **State-split decision (locked):** the authoritative trade ledger — entry price,
-shares, stops, realized P&L — stays in SQLAlchemy. Financial records don't
-belong in a framework's serialization format, particularly with a Postgres
-migration ahead. The *agent's* memory for a position — entry thesis, prior
-reviews, evidence already seen — lives in the LangGraph checkpointer keyed by
-position ID. **LangGraph persists reasoning; the DB persists the books.**
+shares, stops, realized P&L — stays in SQLAlchemy. The *agent's* memory for a
+position — entry thesis, prior reviews, evidence already seen — lives in the
+LangGraph checkpointer keyed by position ID. **LangGraph persists reasoning; the
+DB persists the books.**
 
 ---
 
-## Phase A — Honest measurement
+## Phase A — Unify and record
 
-**Nothing in Phase B ships before this.** Without it, every later change is
-tuned blind and every number is unfalsifiable.
+### A1 — Backtester calls the same functions as live
+`app/backtest/engine.py` currently re-implements the eight screener filters
+(`engine.py:290-311` duplicating `filters.py:76-121`), the exit ladder, market
+context, and the regime gate. Extract each as a **pure function over data**
+(indicators dict / DataFrame in, verdict out) and have both paths call it. The
+split that makes this work: *fetching* data differs between live and backtest;
+*deciding* on it must not.
 
-| # | Task | Where |
-|---|---|---|
-| A1 | Pluggable **candidate-filter** and **allocator** hooks in the backtester, so any agent can be ablated in/out of a run | `app/backtest/engine.py` |
-| A2 | **Decision records** — one row per candidate evaluated, bought *and* blocked, dimensions and indicators as columns | new module + `models.py` |
-| A3 | **Run versioning** — every run stamped with git SHA + config hash | with A2 |
-| A4 | Fix the **live/backtest divergences** — sentiment in `_rules_signal_alignment`; the hardcoded `>= 4` in `route_after_decision` (`graph.py:236`) vs `max_positions = 5` | `scoring.py`, `graph.py` |
-| A5 | **Costs + slippage** — STT, brokerage, impact | `engine.py` |
-| A6 | **Train/holdout split** — tune on 2022–24, freeze 2025, log every peek at the holdout | `backtest.py` |
+### A2 — Decision records
+One row per candidate evaluated — bought **and** blocked — with the dimension
+bands, indicators, and (later) the veto verdict as **columns**, not JSON. This is
+simultaneously the eval dataset, the grader's corpus, and the dashboard's
+backing table.
 
-**Concepts:** experiment design for stochastic systems · ablation methodology ·
-why per-candidate records (not just executed trades) give ~10× the eval data ·
-data snooping and how versioning makes it visible instead of invisible.
+### A3 — Costs, slippage, train/holdout
+STT, brokerage, impact. Tune on 2022–24; touch 2025 once.
+*Debt already incurred: threshold 65 was picked from a sweep on the full period,
+so the holdout has been seen once. Recorded rather than hidden.*
 
-**Done when:** any config produces a number traceable to exact code + settings,
-and rules-only vs LLM can be run head-to-head on identical inputs.
-
----
-
-## Phase B — The agents
-
-Four agents, distinct objectives, distinct cadences, sharing the records
-substrate. Ordered by how cleanly each can be **proven**, not by how interesting
-it is.
-
-### B1 — Allocator (ranking + portfolio construction)
-
-One call sees **all** surviving candidates plus current holdings and allocates
-open slots. Replaces first-come slot-filling (`main.py:46`) and the
-`0.40·vol + 0.35·momentum + 0.25·atr` blend.
-
-*Why an LLM:* comparative judgment. Models are markedly better at "which of
-these eight is most compelling, given I already hold these three" than at
-"score this one 0–100 in isolation." It can also reason about concentration and
-correlation, which the current sector gate does crudely.
-
-*Backtestable:* **fully.** Cleanest measurement in the whole plan — hence first.
-
-**Concepts:** listwise vs pointwise judgment · why per-call scoring quotas can't
-work across independent calls · structured output over a variable-length slate.
-
-### B2 — Forensic veto (entry gate)
-
-Stop asking "is this a good buy?" — the screener already picked it for jumping,
-so the model plays yes-man. Ask **"what specifically kills this trade?"** Output
-is kill/pass **with a cited specific** — a date, a level, a filing — never a vibe.
-
-**Subsumes the sentiment agent.** Don't run two news-reading LLMs. One text
-agent, two outputs: any disqualifier (the veto) and any genuine catalyst (what
-sentiment was meant to provide). The current mood-scorer is confirmation-prone,
-neutral-in-backtest, and the source of the Problem-2 divergence. It retires here.
-
-*Backtestability split — the critical design constraint:*
-- **Rewindable (backtests cleanly):** earnings dates, chart structure from
-  stored bars (resistance walls, block-deal-shaped volume), filings such as
-  promoter pledging. Feed the model *anonymized* facts in backtest so it can't
-  recall outcomes.
-- **Un-rewindable (forward-test only):** general news mood. No point-in-time
-  archive, and the model knows the endings. Validated live by grading (B4), never
-  by backtest.
-
-The constraint *improves* the design — it pushes the veto toward concrete,
-gradeable disqualifiers and away from news mush.
-
-**Concepts:** tool-calling subgraphs · adversarial prompting vs confirmation
-bias · evidence anonymization to defeat training-data lookahead · designing for
-gradeability.
-
-### B3 — Position review (thesis maintenance)
-
-Daily, per open position, **resuming a checkpointed thread**: is the entry
-thesis still intact? A rule sees days-held and P&L. An agent can see *"bought for
-a 3× volume breakout; volume has decayed to 0.6× and it's chopped sideways below
-the breakout level for eight sessions — the reason to own this is gone."*
-
-*Targets Problem 3* — the 108 timeouts. Note a deterministic stale-exit rule
-(e.g. day 9 / <+4%) captures some of this for free, so **the honest experiment is
-LLM-review vs deterministic-stale-exit**, not vs doing nothing.
-
-**Concepts:** checkpointers and `thread_id` · resuming vs re-invoking · what
-belongs in graph state vs the DB (§5) · agents on a different cadence over the
-same node logic.
-
-### B4 — Reflection + grader (the learning loop)
-
-On every close: realized return, alpha vs Midcap 150, reflection on
-outcome-vs-thesis, and a **grade on whether the cited kill_case actually
-materialized**. Lessons retrieved by situation similarity into future B2/B3
-calls.
-
-This closes the loop and is the only mechanism that validates the
-un-backtestable half of B2. It's also the most defensible LLM use case in an
-interview: pure text synthesis over structured records, graded against realized
-outcomes.
-
-**Concepts:** cyclic graphs and termination · memory/retrieval design · grading
-predictions against outcomes rather than vibes.
-
-### Deferred
-
-- **Empirical reweighting** (logistic regression over dimensions → outcome,
-  replacing hand-tuned `DIMENSION_SCORES`). That's sklearn, not an agent, and it
-  needs ~100 graded trades that don't exist yet.
-- **Earnings-calendar blocking.** Real risk, but the fix is a date lookup — ship
-  it as a deterministic Phase C rule, don't dress it as an agent.
-- **Not worth doing:** deep financial-statement analysis (horizon too short),
-  macro regime classification (low signal for 1–4 week holds).
+**Concepts:** pure functions as the seam between environments · why per-candidate
+records give ~2× the eval data of per-trade · data snooping and how versioning
+makes it visible.
 
 ---
 
-## Phase C — Strategy fixes
+## Phase B — Deterministic strategy fixes
 
-Independent of B; each validated on the Phase A harness.
+Backtestable, and where the measurable alpha probably is. Each validated on A,
+each shipped **alone** so the harness can attribute the change.
 
-- **C1 — Regime dial, not switch.** Replace the binary Nifty<SMA50 freeze with a
-  graduated gate: strong → 5 slots full size, neutral → 3, weak → 2 at half
-  size. Never a total freeze. Attacks the dead months and the 2025 drawdown —
-  likely the single biggest return lever in the plan.
-- **C2 — Risk-normalized sizing.** `quantity = risk_budget / (entry − stop)` at
-  ~0.9% of equity. Equalizes risk across volatility regimes; targets Sharpe.
-- **C3 — Compounding.** Size off current equity, not `starting_capital`
-  (`engine.py:154` sizes off the constant).
-- **C4 — Entry quality.** Earnings-date block; close-in-top-30%-of-range filter;
-  replace the ATR term in ranking with 20-day relative strength vs the midcap
-  index.
+Ordered by expected value ÷ cost:
+
+### B1 — ATR-scaled target *(one line)*
+Replace the flat 18% with `target = entry × (1 + 4 × ATR%)`. A 2.5%-ATR stock
+targets 10%; a 4.5%-ATR stock targets 18%. Puts the target *inside* the
+distribution of achievable 21-day moves. **Directly attacks the 110 timeouts and
+the 17-target problem** — the highest-value single change identified.
+
+### B2 — Relative momentum instead of absolute *(needs index data in the store)*
+Rank and filter on performance **versus the Midcap 150**, not versus zero. In a
+−5% tape a stock at −1% is genuinely strong; in a +5% tape a stock at +2% is a
+laggard the current screen buys happily. Self-adjusts across regimes rather than
+needing a regime switch bolted on, and cross-sectional momentum is the version
+with actual empirical support. **The real fix for bad regimes.**
+
+### B3 — Close-in-top-of-range filter *(one line)*
+Require `(close − low) / (high − low) > 0.6`. A 3× volume day closing in the
+bottom third of its range is distribution, not accumulation — someone is selling
+into the buying. Removes the worst entries for free.
+
+### B4 — Stale exit *(small)*
+Exit at ~day 9 if under ~+4%. Note it does **not** improve win rate; it improves
+**capital velocity**. With 5 slots, freeing a dead position 12 days early is
+roughly an extra trade per slot per quarter.
+
+### B5 — Compounding *(one line)*
+`engine.py:154` sizes off `starting_capital`, not current equity, so the system
+never compounds. Nearly free.
+
+### B6 — Not-extended filter *(one line)*
+Reject entries where `(price − sma20) / sma20` exceeds ~8%. A stock stretched far
+above its short MA mean-reverts, and that reversion is what hits the stops.
+
+### B7 — Breadth-based regime dial *(moderate)*
+Replace the binary `Nifty < SMA50` freeze with **% of universe above its own
+SMA50** — continuous and *leading* (breadth deteriorates before the index does).
+Feeds a dial: strong → 5 slots full size, neutral → 3, weak → 2 at half size.
+Never a total freeze. Attacks the dead months.
+
+### B8 — Risk-normalized sizing *(moderate)*
+`quantity = risk_budget / (entry − stop)` at ~0.9% of equity. Equalizes risk
+across volatility regimes; targets Sharpe.
+
+### B9 — Pullback limit entry *(changes the fill model)*
+Instead of a market order at the next open, rest a limit near the prior close.
+Misses the runaway gappers but gains several percent of cushion above the stop on
+everything that fills. Fill rate is measurable directly from stored bars — check
+how often the next day's low reaches the prior close before building it.
+
+### B10 — Scale out in two pieces *(simulator work)*
+Sell half at +1.5×ATR, trail the remainder. Converts part of the 110 timeouts
+into small wins while keeping the tail. Needs partial-fill bookkeeping in the
+simulator.
+
+*Deferred, unproven:* chart-structure detectors (resistance, gaps, volume
+concentration). A crude version already exists in `_rules_entry_timing`'s
+round-number check and has not demonstrated value.
+
+> B1, B3, B5 and B6 are all one-liners that can be A/B'd on the harness the day
+> A1 lands — which is the practical argument for finishing the unification before
+> touching strategy.
 
 ---
 
-## Phase D — Ship it
+## Phase C — The LLM agents
 
-- **D1 — Next.js dashboard.** Replaces the Jinja templates in `app/templates/`.
-  Buildable in parallel with Phase B once A2 records exist. Publishing the
-  ablation results publicly is the showcase.
-- **D2 — Cloud daily runs.** Laptop cron isn't sustainable. Decide DB shape
-  first — the 58MB `backtest_data.db` of OHLCV shouldn't necessarily move
-  wherever the app DB goes.
-- **D3 — Human-in-the-loop gate.** LangGraph `interrupt()` before any live
-  order. Practically necessary and a genuine framework capability.
-- **D4 — Alerts + forward-test collector.** Live trades vs actuals, benchmarked
-  against **Midcap 150** (the honest benchmark, not Nifty 50).
-- **D5 — The writeup.** *"Does the LLM actually add alpha? An ablation study"* —
-  a byproduct of Phase A, and the strongest artifact here.
+The showcase, and the learning. Validated forward by grading, never by backtest.
+
+### C1 — Forensic veto
+Ask **"what specifically kills this trade?"** not "is this a good buy?" — the
+screener already picked it for jumping, so a "good buy?" prompt gets a yes-man.
+Output is kill/pass **with a cited specific**, never a vibe.
+
+**Ships in shadow mode:** runs on every candidate, records its verdict, routes
+nothing. Zero risk to the portfolio, and every trade becomes a labelled data
+point — including the ones it wanted to kill, whose outcomes you would otherwise
+never observe. Flip to acting via config once the data justifies it.
+
+*v1 scope:* one call, Tavily search, structured output, fail-open on error.
+*Not v1:* earnings calendar, filings parsing, multi-step evidence gathering.
+
+### C2 — Position review (thesis maintenance)
+Daily, per open position, **resuming a checkpointed thread**: is the entry thesis
+still intact? Targets the same 110 timeouts as B1 — which makes the honest
+experiment **LLM review vs the B1 deterministic rule on identical bars**, not LLM
+vs nothing. Expect the rule to be hard to beat; run it anyway, because the result
+is a real finding either way and the architecture is the point.
+
+### C3 — Reflection and grading
+On every close: realized return, alpha vs Midcap 150, and a **grade on whether
+the cited kill_case actually materialized**. Lessons retrieved by situation
+similarity into future C1/C2 calls.
+
+Two independent questions, and they fail independently:
+**is the cited evidence true?** and **did acting on it help?** Accurate evidence
+with bad P&L means the veto is right about things that do not matter.
+
+### Not scheduled
+Empirical reweighting (that is sklearn, not an agent, and needs ~100 graded
+trades). Allocator/ranking — ranking numeric candidates gives an LLM no
+information the formula lacks; the earlier case for it was overstated.
+
+---
+
+## Phase D — Ship
+
+- **D1 — Deploy the deterministic system now.** It works and it is validated.
+  Every week it sits on a laptop is a week of forward control data that cannot be
+  recovered. This is the control group for every LLM experiment that follows.
+- **D2 — Next.js dashboard**, replacing `app/templates/`. Buildable in parallel
+  once A2 records exist.
+- **D3 — Human-in-the-loop gate** — LangGraph `interrupt()` before any live order.
+- **D4 — Forward-test collector** — live trades vs actuals, benchmarked against
+  **Midcap 150**, not Nifty 50.
+- **D5 — The writeup** — what the ablations showed, honestly.
 
 ---
 
 ## Sequencing
 
 ```
-Phase A  ──►  the measuring stick            (blocks everything)
-Phase B  ──►  agents, each measured vs baseline  ─┐ largely
-Phase C  ──►  strategy fixes, each validated     ─┘ independent
-Phase D  ──►  ship + write up                (D1 can start after A2)
+A  ── unify + record          (blocks C: records before agents)
+D1 ── deploy deterministic    (parallel with A; starts the forward clock)
+B  ── deterministic fixes     ← measurable alpha
+C  ── LLM agents              ← showcase + learning
+D  ── dashboard, HITL, writeup
 ```
 
-**The one hard rule:** nothing in B or C ships without passing the Phase A
-harness. Otherwise this is back to fitting the backtest by iteration — the exact
-bias §3 documents.
+B and C interleave freely. The one hard rule: **A2 lands before C1**, because a
+shadow deployment that does not record teaches nothing.
 
 ---
 
-## Known limitations (stated honestly, kept visible)
+## Expectations, honestly
 
-1. **Survivorship bias.** Universe seeded from today's constituents. Returns are
-   inflated until point-in-time membership lands.
+At ~59 trades/year, three months of forward data is ~15 trades — not enough to
+conclude anything. Six to twelve months before grading says much.
+
+**So the resume value must not depend on proving alpha.** The defensible story is
+the apparatus: a multi-agent system where every decision is recorded and graded
+against outcomes, an honest account of what the data does and does not show, and
+three LLMs removed because they were not earning their place. That is true today
+and stronger than any backtest number.
+
+---
+
+## Known limitations
+
+1. **Survivorship bias.** Universe seeded from today's constituents; delisted
+   losers absent. Returns inflated until point-in-time membership lands.
 2. **Adjustment restatement.** `auto_adjust=True` back-adjusts old bars for later
    splits — a mild lookahead.
-3. **The news-reading half of the veto is not backtestable.** No point-in-time
-   archive, and the model knows the outcomes. Forward-graded only (B4).
-4. **Fundamentals are point-in-time-absent.** `yfinance .info` is a current
+3. **LLM alpha is not backtestable.** No point-in-time archive; the model knows
+   the endings. Forward-graded only.
+4. **Fundamentals are point-in-time absent.** `yfinance .info` is a current
    snapshot — used live, skipped in backtest.
-5. **Sector context absent in backtest**, so concentration limits bind live but
-   not historically.
-6. **Relative strength is a live-only signal — accepted knowingly.** `market_regime`
-   scores from four warnings live but only three in backtest, because
-   `engine.py` hardcodes `sector_day_pct = 0.0` and `divergence_note = ""`. So the
-   weak-sector warning and the relative-strength cancellation that answers it
-   both fire live and never in backtest. Kept on the reasoning that a stock
-   rising while its sector falls shows stock-specific demand rather than beta —
-   but it is unvalidated, and it is a live/backtest divergence of the same shape
-   as the sentiment one removed in Phase A. Proper fix is point-in-time sector
-   indices (see limitation 5); until then, treat any regime-driven result as
-   measured on three-quarters of its live inputs.
+5. **Sector data absent in backtest.** `sector_day_pct` hardcoded `0.0`.
+6. **Relative strength is live-only — accepted knowingly.** `market_regime` scores
+   from four warnings live, three in backtest, because of (5). Kept on the
+   reasoning that a stock rising while its sector falls shows stock-specific
+   demand rather than beta. Unvalidated. Proper fix is point-in-time sector
+   indices.
+7. **Threshold 65 saw the holdout once** (§A3).
 
 ---
 
 ## Appendix — The forensic veto, in plain words
 
-**Today:** the decision LLM is asked "is this a good buy?" and answers by
-re-checking RSI/MACD thresholds the computer already checked. Worse than
-useless — it's a yes-man, because the screener handed it a stock *selected for
-jumping*, and the jump itself generated the bullish news it will find.
+**Today's failure mode:** ask an LLM "is this a good buy?" about a stock the
+screener selected *for jumping*, and the jump itself generated the bullish news
+it will find. It becomes a yes-man with a search tool.
 
 **The flip:** ask *"what would kill this trade?"* That forces a hunt for the
 landmine instead of a cheer. The screener already found the upside; the veto's
 only job is to remove downside.
 
 **The analogy:** the screener is a recruiter surfacing strong résumés. The rules
-are the test score — objective, and gameable. The veto is the **skeptical hiring
+are the test score — objective and gameable. The veto is the **skeptical hiring
 manager doing the background check**, looking for the dealbreaker the résumé
-can't show: *earnings in two days · the founder just sold · this is breaking into
-a resistance wall · that volume spike was a single block deal.*
+cannot show: *earnings in two days · the founder just sold · a regulatory notice
+last week.*
 
-**Why it targets the biggest leak:** 72 of 232 trades stopped out. Many have a
-factual tell that exists in text somewhere. The veto doesn't need to find
-winners — killing even a third of the worst trades moves the whole P&L.
+**Why it targets the biggest leak:** 80 of 235 trades stopped out. Many have a
+factual tell that exists in text somewhere. The veto does not need to find
+winners — killing a third of the worst trades moves the whole P&L.
 
-**How we'll know it worked:** every veto cites a specific, falsifiable reason.
-B4 later checks: did that thing happen, and did the trade lose? After ~100
-graded decisions that's a real measurement of whether the model's skepticism
-predicts outcomes. Not vibes.
+**How we will know:** every veto cites a specific, falsifiable reason. C3 checks
+whether that thing happened and whether the trade lost. After ~100 graded
+decisions that is a real measurement of whether the model's skepticism predicts
+outcomes.

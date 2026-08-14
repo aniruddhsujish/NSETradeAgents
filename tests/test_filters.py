@@ -1,18 +1,26 @@
 import pytest
 import pandas as pd
 from unittest.mock import patch, MagicMock
-from app.screener.filters import screen
+from app.screener.filters import screen, regime_blocked
 
-CONFIG = {
+SCREENER_SETTINGS = {
     "min_avg_daily_value": 20_000_000,
     "min_price": 100.0,
     "min_atr_pct": 1.5,
     "max_day_change_pct": 8.0,
     "min_volume_ratio": 2.0,
     "min_volume_shares": 50000,
-    "rsi_min": 58.0,
-    "rsi_max": 67.0,
+    "rsi_min": 55.0,
+    "rsi_max": 70.0,
+    "regime_sma_period": 50,
 }
+
+
+@pytest.fixture(autouse=True)
+def patch_screener_settings(monkeypatch):
+    """Pin thresholds so these tests don't depend on the local .env."""
+    for key, value in SCREENER_SETTINGS.items():
+        monkeypatch.setattr(f"app.screener.filters.settings.{key}", value)
 
 # Indicators that pass all 7 filters
 GOOD_INDICATORS = {
@@ -40,7 +48,7 @@ def make_fake_df():
 
 
 def test_empty_tickers_return_empty():
-    result = screen([], CONFIG)
+    result = screen([])
     assert result == []
 
 
@@ -53,7 +61,7 @@ def test_passes_all_filters():
 
         mock_download.return_value = fake_df
 
-        result = screen(["TITAN.NS"], CONFIG)
+        result = screen(["TITAN.NS"])
 
     assert len(result) == 1
     assert result[0]["ticker"] == "TITAN.NS"
@@ -73,7 +81,7 @@ def test_blocked_by_trend():
     ):
 
         mock_download.return_value = fake_df
-        result = screen(["TITAN.NS"], CONFIG)
+        result = screen(["TITAN.NS"])
 
     assert result == []
 
@@ -87,7 +95,7 @@ def test_blocked_by_rsi_too_high():
     ):
 
         mock_download.return_value = fake_df
-        result = screen(["TITAN.NS"], CONFIG)
+        result = screen(["TITAN.NS"])
 
     assert result == []
 
@@ -101,7 +109,7 @@ def test_blocked_by_low_volume():
     ):
 
         mock_download.return_value = fake_df
-        result = screen(["TITAN.NS"], CONFIG)
+        result = screen(["TITAN.NS"])
 
     assert result == []
 
@@ -128,8 +136,48 @@ def test_ranking_order():
         mock_download.return_value = fake_df
         mock_indicators.side_effect = [high_score, low_score]
 
-        result = screen(["TITAN.NS", "RELIANCE.NS"], CONFIG)
+        result = screen(["TITAN.NS", "RELIANCE.NS"])
 
     assert len(result) == 2
     assert result[0]["ticker"] == "TITAN.NS"  # Higher
     assert result[1]["ticker"] == "RELIANCE.NS"  # Lower
+
+
+# ── regime_blocked ────────────────────────────────────────────────────────────
+
+PERIOD = SCREENER_SETTINGS["regime_sma_period"]
+
+
+def test_regime_blocked_when_below_sma():
+    # 49 bars at 100 then a crash to 50 -> mean 99, last 50
+    closes = pd.Series([100.0] * (PERIOD - 1) + [50.0])
+    assert regime_blocked(closes) is True
+
+
+def test_regime_not_blocked_when_above_sma():
+    closes = pd.Series([100.0] * (PERIOD - 1) + [200.0])
+    assert regime_blocked(closes) is False
+
+
+def test_regime_not_blocked_when_exactly_at_sma():
+    # Boundary: comparison is strict `<`, so sitting on the SMA does not block
+    assert regime_blocked(pd.Series([100.0] * PERIOD)) is False
+
+
+def test_regime_uses_only_the_last_period_bars():
+    # A crash far in the past must not drag the SMA down forever
+    closes = pd.Series([1.0] * 200 + [100.0] * PERIOD)
+    assert regime_blocked(closes) is False
+
+
+def test_regime_fails_open_on_short_series():
+    assert regime_blocked(pd.Series([100.0] * (PERIOD - 1))) is False
+
+
+def test_regime_fails_open_on_none():
+    assert regime_blocked(None) is False
+
+
+def test_regime_fails_open_on_malformed_data():
+    # Garbage in must not silently halt trading
+    assert regime_blocked(pd.Series(["a", "b", "c"] * PERIOD)) is False

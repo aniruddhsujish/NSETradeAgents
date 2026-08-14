@@ -1,3 +1,4 @@
+import pandas as pd
 import structlog
 from app.utils.indicators import compute_indicators
 from app.utils.market_data import safe_yf_download, extract_ticker_df
@@ -6,7 +7,69 @@ from app.core.config import settings
 logger = structlog.get_logger()
 
 
-def screen(tickers: list[str], config: dict) -> list[dict]:
+def evaluate_candidate(ind: dict) -> tuple[dict | None, str]:
+    """Apply the screener filters to one ticker's indicators.
+
+    Returns (candidate, "passed"), or (None, reason) where reason is one of:
+    no_data, liquidity, price, trend, volatility, day_change, volume, rsi, momentum.
+    """
+    if ind["avg_daily_value"] < settings.min_avg_daily_value:
+        return None, "liquidity"
+    if ind["current_price"] < settings.min_price:
+        return None, "price"
+    if ind["sma200"] is None:
+        return None, "no_data"
+    if not (ind["current_price"] > ind["sma50"] > ind["sma200"]):
+        return None, "trend"
+    if ind["atr_pct"] < settings.min_atr_pct:
+        return None, "volatility"
+    if ind["day_change_pct"] > settings.max_day_change_pct:
+        return None, "day_change"
+    if ind["volume_ratio"] < settings.min_volume_ratio:
+        return None, "volume"
+    if ind["today_vol"] < settings.min_volume_shares:
+        return None, "volume"
+    if ind["day_change_pct"] <= 0.5:
+        return None, "volume"
+    if not (settings.rsi_min <= ind["rsi"] <= settings.rsi_max):
+        return None, "rsi"
+    if ind["momentum_5d"] < 2.0:
+        return None, "momentum"
+
+    vol_norm = min(ind["volume_ratio"] / 5.0, 1.0)
+    momentum_norm = min(max(ind["momentum_5d"], -15), 15) / 15
+    atr_norm = min(ind["atr_pct"] / 5.0, 1.0)
+
+    return {
+        "current_price": ind["current_price"],
+        "volume_ratio": ind["volume_ratio"],
+        "avg_daily_value": ind["avg_daily_value"],
+        "day_change_pct": ind["day_change_pct"],
+        "momentum_5d": ind["momentum_5d"],
+        "rsi": ind["rsi"],
+        "atr_pct": ind["atr_pct"],
+        "sma50": ind["sma50"],
+        "sma200": ind["sma200"],
+        "screener_score": (vol_norm * 0.40)
+        + (momentum_norm * 0.35)
+        + (atr_norm * 0.25),
+    }, "passed"
+
+
+def regime_blocked(index_close: pd.Series | None) -> bool:
+    """True when the index is below it's regime SMA - block new entries"""
+    if index_close is None:
+        return False
+    try:
+        if len(index_close) < settings.regime_sma_period:
+            return False
+        sma = float(index_close.tail(settings.regime_sma_period).mean())
+        return float(index_close.iloc[-1]) < sma
+    except Exception:
+        return False
+
+
+def screen(tickers: list[str]) -> list[dict]:
     """
     Download price/volume data for all tickers at once and apply
     math filters. Returns ranked list of candidates.
@@ -23,14 +86,12 @@ def screen(tickers: list[str], config: dict) -> list[dict]:
     """
     try:
         _nifty = safe_yf_download("^NSEI", period="60d")
-        if not _nifty.empty and len(_nifty) >= settings.regime_sma_period:
-            _close = _nifty["Close"].squeeze()
-            if float(_close.iloc[-1]) < float(_close.tail(settings.regime_sma_period).mean()):
-                logger.info(
-                    "screener_regime_blocked",
-                    reason="Nifty50 below 50d SMA - skipping new entries",
-                )
-                return []
+        if not _nifty.empty and regime_blocked(_nifty["Close"].squeeze()):
+            logger.info(
+                "screener_regime_blocked",
+                reason="Nifty50 below 50d SMA - skipping new entries",
+            )
+            return []
     except Exception as e:
         logger.warning("regime_check_failed", error=str(e))
 
@@ -72,77 +133,15 @@ def screen(tickers: list[str], config: dict) -> list[dict]:
 
             ind = compute_indicators(df)
 
-            # Filter 1: liquidity
-            if ind["avg_daily_value"] < config["min_avg_daily_value"]:
-                counts["liquidity"] += 1
-                continue
+            candidate, reason = evaluate_candidate(ind)
+            counts[reason] += 1
 
-            # Filter 2: minimum price
-            if ind["current_price"] < config["min_price"]:
-                counts["price"] += 1
+            if candidate is None:
                 continue
-
-            # Filter 3: trend — price above SMA50 above SMA200
-            if ind["sma200"] is None:
-                counts["no_data"] += 1
-                continue
-            if not (ind["current_price"] > ind["sma50"] > ind["sma200"]):
-                counts["trend"] += 1
-                continue
-
-            # Filter 4: volatility
-            if ind["atr_pct"] < config["min_atr_pct"]:
-                counts["volatility"] += 1
-                continue
-
-            # Filter 5: skip stocks that already surged today
-            if ind["day_change_pct"] > config["max_day_change_pct"]:
-                counts["day_change"] += 1
-                continue
-
-            # Filter 6: unusual volume on an up day
-            if ind["volume_ratio"] < config["min_volume_ratio"]:
-                counts["volume"] += 1
-                continue
-            if ind["today_vol"] < config["min_volume_shares"]:
-                counts["volume"] += 1
-                continue
-            if ind["day_change_pct"] <= 0.5:
-                counts["volume"] += 1
-                continue
-
-            # Filter 7: RSI in tradeable range
-            if not (config["rsi_min"] <= ind["rsi"] <= config["rsi_max"]):
-                counts["rsi"] += 1
-                continue
-
-            # Filter 8: minimum 5-day momentum
-            if ind["momentum_5d"] < 2.0:
-                counts["momentum"] += 1
-                continue
-
-            # Passed — compute ranking score (all components normalised to [0, 1])
-            vol_norm = min(ind["volume_ratio"] / 5.0, 1.0)
-            momentum_norm = min(max(ind["momentum_5d"], -15), 15) / 15
-            atr_norm = min(ind["atr_pct"] / 5.0, 1.0)
-            score = (vol_norm * 0.40) + (momentum_norm * 0.35) + (atr_norm * 0.25)
 
             candidates.append(
-                {
-                    "ticker": ticker,
-                    "current_price": ind["current_price"],
-                    "volume_ratio": ind["volume_ratio"],
-                    "avg_daily_value": ind["avg_daily_value"],
-                    "day_change_pct": ind["day_change_pct"],
-                    "momentum_5d": ind["momentum_5d"],
-                    "rsi": ind["rsi"],
-                    "atr_pct": ind["atr_pct"],
-                    "sma50": ind["sma50"],
-                    "sma200": ind["sma200"],
-                    "score": round(score, 3),
-                }
+                {"ticker": ticker, "score": candidate["screener_score"], **candidate}
             )
-            counts["passed"] += 1
 
         except Exception as e:
             logger.warning("ticker_screen_failed", ticker=ticker, error=str(e))

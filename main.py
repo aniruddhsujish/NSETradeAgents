@@ -18,19 +18,7 @@ def run_scan():
 
     tickers = fetch_universe()
 
-    candidates = screen(
-        tickers,
-        {
-            "min_volume_ratio": settings.min_volume_ratio,
-            "min_volume_shares": settings.min_volume_shares,
-            "min_avg_daily_value": settings.min_avg_daily_value,
-            "max_day_change_pct": settings.max_day_change_pct,
-            "min_price": settings.min_price,
-            "min_atr_pct": settings.min_atr_pct,
-            "rsi_min": settings.rsi_min,
-            "rsi_max": settings.rsi_max,
-        },
-    )
+    candidates = screen(tickers)
 
     if not candidates:
         logger.info("scan_no_candidates")

@@ -7,6 +7,7 @@ import structlog
 from app.backtest.store import BacktestStore
 from app.agents.technical import _compute_signal
 from app.core.config import settings
+from app.screener.filters import evaluate_candidate, regime_blocked
 from app.utils.indicators import compute_indicators
 from app.utils.scoring import compute_rules_confidence
 
@@ -95,19 +96,6 @@ def _market_context(nifty: pd.DataFrame, vix: pd.DataFrame, ts: pd.Timestamp) ->
     }
 
 
-def _regime_blocked(nifty: pd.DataFrame, ts: pd.Timestamp) -> bool:
-    if nifty.empty:
-        return False
-    try:
-        n_close = nifty.loc[:ts, "Close"]
-        if len(n_close) < settings.regime_sma_period:
-            return False
-        sma50 = float(n_close.tail(settings.regime_sma_period).mean())
-        return float(n_close.iloc[-1]) < sma50
-    except Exception:
-        return False
-
-
 def run_backtest(
     db_path: str = "backtest_data.db",
     start: date = date(2022, 1, 1),
@@ -126,6 +114,7 @@ def run_backtest(
 
     nifty = all_bars.get("^NSEI", pd.DataFrame())
     vix = all_bars.get("^INDIAVIX", pd.DataFrame())
+    nifty_close = nifty["Close"] if not nifty.empty else None
     universe = sorted(t for t in all_bars if not t.startswith("^"))
 
     logger.info("backtest_init", trading_days=len(trading_days), universe=len(universe))
@@ -271,7 +260,8 @@ def run_backtest(
 
         # 3. Generate new signals from today's close
         capacity = settings.max_positions - len(open_positions)
-        if capacity > 0 and not _regime_blocked(nifty, ts):
+        asof_close = nifty_close.loc[:ts] if nifty_close is not None else None
+        if capacity > 0 and not regime_blocked(asof_close):
             held = {p.ticker for p in open_positions}
             mkt_ctx = _market_context(nifty, vix, ts)
             signal_candidates: list[dict] = []
@@ -293,28 +283,8 @@ def run_backtest(
                 if _compute_signal(ind) != "BUY":
                     continue
 
-                # Screener filters (mirrors filters.py)
-                if ind["avg_daily_value"] < settings.min_avg_daily_value:
-                    continue
-                if ind["current_price"] < settings.min_price:
-                    continue
-                if ind["sma200"] is None:
-                    continue
-                if not (ind["current_price"] > ind["sma50"] > ind["sma200"]):
-                    continue
-                if ind["atr_pct"] < settings.min_atr_pct:
-                    continue
-                if ind["day_change_pct"] > settings.max_day_change_pct:
-                    continue
-                if ind["volume_ratio"] < settings.min_volume_ratio:
-                    continue
-                if ind["today_vol"] < settings.min_volume_shares:
-                    continue
-                if ind["day_change_pct"] <= 0.5:
-                    continue
-                if not (settings.rsi_min <= ind["rsi"] <= settings.rsi_max):
-                    continue
-                if ind["momentum_5d"] < 2.0:
+                candidate, _ = evaluate_candidate(ind)
+                if candidate is None:
                     continue
 
                 est = ind["current_price"]
@@ -333,17 +303,11 @@ def run_backtest(
                 all_scores.append(score)
 
                 if score >= settings.rules_confidence_threshold:
-                    vol_norm = min(ind["volume_ratio"] / 5.0, 1.0)
-                    momentum_norm = min(max(ind["momentum_5d"], -15), 15) / 15
-                    atr_norm = min(ind["atr_pct"] / 5.0, 1.0)
-                    screener_score = (
-                        (vol_norm * 0.40) + (momentum_norm * 0.35) + (atr_norm * 0.25)
-                    )
                     signal_candidates.append(
                         {
                             "ticker": ticker,
                             "score": score,
-                            "screener_score": screener_score,
+                            "screener_score": candidate["screener_score"],
                             "atr_pct": ind["atr_pct"],
                         }
                     )
