@@ -25,7 +25,7 @@ class Trade(Base):
     close_price: Mapped[Optional[float]]
     close_reason: Mapped[Optional[str]] = mapped_column(
         String(20), nullable=True
-    )  # tp | sl | manual | review | timeout
+    )  # stop | trail | target | timeout | manual — see app/portfolio/exits.py
     pnl: Mapped[Optional[float]]
     pnl_pct: Mapped[Optional[float]]
     confidence: Mapped[Optional[float]]

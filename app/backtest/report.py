@@ -3,6 +3,7 @@ import math
 from datetime import date
 
 from app.backtest.engine import ClosedTrade
+from app.core.config import settings
 
 
 def _cagr(start_val: float, end_val: float, years: float) -> float:
@@ -81,19 +82,38 @@ def _yearly_breakdown(trades: list[ClosedTrade], equity_curve: list[tuple[date, 
 
 
 def _score_analysis(trades: list[ClosedTrade], all_scores: list[int]):
-    dist_buckets = [(0, 49), (50, 59), (60, 69), (70, 79), (80, 100)]
-    outcome_buckets = [(50, 59), (60, 69), (70, 79), (80, 100)]
+    threshold = int(settings.rules_confidence_threshold)
+
+    # Buckets are derived, not hardcoded: the score scale and the entry
+    # threshold have both moved before, and literals silently went stale.
+    def _buckets(start: int) -> list[tuple[int, int]]:
+        """10-wide buckets from `start`, with the last one closing on 100.
+
+        A perfect score of 100 is reachable, so the top bucket must include it.
+        """
+        lows = list(range(start, 100, 10))
+        return [
+            (lo, lows[i + 1] - 1 if i + 1 < len(lows) else 100)
+            for i, lo in enumerate(lows)
+        ]
+
+    dist_buckets = _buckets(0)
+    outcome_buckets = _buckets(threshold)
 
     print()
     print("=" * 57)
     print("  SCORE DISTRIBUTION  (all signals that passed tech gate)")
+    print(f"  entry threshold = {threshold}  (marked ►)")
     print("=" * 57)
     total = len(all_scores)
     for lo, hi in dist_buckets:
         count = sum(1 for s in all_scores if lo <= s <= hi)
         bar = "█" * (count * 30 // max(total, 1))
-        label = f"{lo}-{hi:>3}"
-        print(f"  {label} : {bar:<30} {count:>5}  ({count/max(total,1)*100:.1f}%)")
+        mark = "►" if lo <= threshold <= hi else " "
+        label = f"{lo:>3}-{hi:>3}"
+        print(
+            f" {mark}{label} : {bar:<30} {count:>5}  ({count/max(total,1)*100:.1f}%)"
+        )
 
     print()
     print("=" * 57)

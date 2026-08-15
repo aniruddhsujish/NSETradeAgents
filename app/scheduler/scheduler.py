@@ -10,6 +10,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from app.core.logging import setup_logging
 from app.core.database import init_db
 from app.core.config import settings
+from app.portfolio.exits import Bar, PositionView, evaluate_exit
 from app.portfolio.simulator import simulator
 from app.utils.market_data import safe_yf_download, extract_ticker_df
 
@@ -90,7 +91,11 @@ def review_positions() -> None:
         try:
             df = extract_ticker_df(raw, ticker)
             if df is None:
-                logger.error("position_review_fetch_failed", ticker=ticker, error="ticker not in batch download")
+                logger.error(
+                    "position_review_fetch_failed",
+                    ticker=ticker,
+                    error="ticker not in batch download",
+                )
                 continue
             current_price = float(df["Close"].dropna().iloc[-1])
             live_prices[ticker] = current_price
@@ -98,69 +103,27 @@ def review_positions() -> None:
             logger.error("position_review_fetch_failed", ticker=ticker, error=str(e))
             continue
 
-        stop_loss = position["stop_loss"]
-        take_profit = position["take_profit"]
-        peak_price = position.get("peak_price") or 0
-        hybrid_active = position.get("hybrid_active", False)
+        result = evaluate_exit(
+            PositionView(
+                entry_date=position["opened_at"].date(),
+                stop_price=position["stop_loss"],
+                target_price=position["take_profit"],
+                trail_stop=position.get("trail_stop") or 0.0,
+                hybrid_active=position.get("hybrid_active", False),
+            ),
+            Bar.flat(current_price),
+            datetime.now(IST).date(),
+        )
 
-        # Catastrophe protection - hybrid positions only
-        # fires if price drops 15% below peak intraday (fraud, accident, major news etc) - bypasses normal trail and exits immediately to prevent large loss
-        if hybrid_active and peak_price > 0:
-            catastrophe_stop = peak_price * (1 - settings.trail_intraday_catastrophe_pct)
-            if current_price <= catastrophe_stop:
-                logger.info(
-                    "position_review_catastrophe_stop",
-                    ticker=ticker,
-                    price=current_price,
-                    peak=peak_price,
-                    catastrophe_stop=catastrophe_stop,
-                )
-                simulator.close_trade(ticker, current_price, reason="catastrophe")
-                continue
+        if result is None:
+            logger.info("position_review_hold", ticker=ticker, price=current_price)
+            continue
 
-        # Original stop loss - all positions
-        if current_price <= stop_loss:
-            logger.info(
-                "position_review_stop_hit",
-                ticker=ticker,
-                price=current_price,
-                stop_loss=stop_loss,
-            )
-            simulator.close_trade(ticker, current_price, reason="sl")
-
-        # Take profit and timeout - non-hybrid only
-        elif not hybrid_active and current_price >= take_profit:
-            logger.info(
-                "position_review_target_hit",
-                ticker=ticker,
-                price=current_price,
-                reason="tp",
-            )
-            simulator.close_trade(ticker, current_price, reason="tp")
-
-        elif (
-            not hybrid_active
-            and (datetime.now() - position["opened_at"]).days >= settings.max_hold_days
-        ):
-            logger.info(
-                "position_review_timeout",
-                ticker=ticker,
-                days_held=(datetime.now() - position["opened_at"]).days,
-                current_price=current_price,
-                reason="timeout",
-            )
-            simulator.close_trade(ticker, current_price, reason="timeout")
-
-        else:
-            logger.info(
-                "position_review_hold",
-                ticker=ticker,
-                price=current_price,
-                pct_to_stop=round((current_price - stop_loss) / current_price * 100, 2),
-                pct_to_target=round(
-                    (take_profit - current_price) / current_price * 100, 2
-                ),
-            )
+        exit_price, reason = result
+        logger.info(
+            "position_review_exit", ticker=ticker, price=exit_price, reason=reason
+        )
+        simulator.close_trade(ticker, exit_price, reason=reason)
 
     simulator.save_snapshot(open_prices=live_prices if live_prices else None)
 
@@ -193,7 +156,11 @@ def review_trail_eod() -> None:
         try:
             df = extract_ticker_df(raw, ticker)
             if df is None:
-                logger.error("trail_eod_fetch_failed", ticker=ticker, error="ticker not in batch download")
+                logger.error(
+                    "trail_eod_fetch_failed",
+                    ticker=ticker,
+                    error="ticker not in batch download",
+                )
                 continue
             close_price = float(df["Close"].dropna().iloc[-1])
         except Exception as e:

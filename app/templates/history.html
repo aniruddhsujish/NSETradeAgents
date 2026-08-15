@@ -102,14 +102,24 @@ content %}
         </td>
 
         <td class="px-6 py-4 text-center">
-          {% if trade.close_reason == "tp" %}
+          {% if trade.close_reason == "target" %}
           <span
             class="text-xs px-2 py-0.5 rounded-full bg-emerald-900 text-emerald-400"
             >Target</span
           >
-          {% elif trade.close_reason == "sl" %}
+          {% elif trade.close_reason == "trail" %}
+          <span
+            class="text-xs px-2 py-0.5 rounded-full bg-emerald-900 text-emerald-400"
+            >Trailing Stop</span
+          >
+          {% elif trade.close_reason == "stop" %}
           <span class="text-xs px-2 py-0.5 rounded-full bg-red-900 text-red-400"
             >Stop Loss</span
+          >
+          {% elif trade.close_reason == "timeout" %}
+          <span
+            class="text-xs px-2 py-0.5 rounded-full bg-amber-900 text-amber-400"
+            >Timeout</span
           >
           {% elif trade.close_reason == "manual" %}
           <span

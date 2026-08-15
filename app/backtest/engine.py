@@ -7,6 +7,7 @@ import structlog
 from app.backtest.store import BacktestStore
 from app.agents.technical import _compute_signal
 from app.core.config import settings
+from app.portfolio.exits import Bar, PositionView, evaluate_exit
 from app.screener.filters import evaluate_candidate, regime_blocked
 from app.utils.indicators import compute_indicators
 from app.utils.scoring import compute_rules_confidence
@@ -45,25 +46,22 @@ class ClosedTrade:
 
 
 def _check_exit(pos: Position, bar: pd.Series, today: date) -> tuple[float, str] | None:
-    open_p = float(bar["Open"])
-    high_p = float(bar["High"])
-    low_p = float(bar["Low"])
-    close_p = float(bar["Close"])
-
-    effective_stop = pos.trail_stop if pos.trail_stop > 0 else pos.stop_price
-    stop_hit = low_p <= effective_stop
-    target_hit = (not pos.hybrid_active) and high_p >= pos.target_price
-    days_held = (today - pos.entry_date).days
-
-    if stop_hit and target_hit:
-        return min(open_p, effective_stop), "stop"
-    if stop_hit:
-        return min(open_p, effective_stop), "trail" if pos.trail_stop > 0 else "stop"
-    if target_hit:
-        return max(open_p, pos.target_price), "target"
-    if (not pos.hybrid_active) and days_held >= settings.max_hold_days:
-        return close_p, "timeout"
-    return None
+    return evaluate_exit(
+        PositionView(
+            entry_date=pos.entry_date,
+            stop_price=pos.stop_price,
+            target_price=pos.target_price,
+            trail_stop=pos.trail_stop,
+            hybrid_active=pos.hybrid_active,
+        ),
+        Bar(
+            open=float(bar["Open"]),
+            high=float(bar["High"]),
+            low=float(bar["Low"]),
+            close=float(bar["Close"]),
+        ),
+        today,
+    )
 
 
 def _market_context(nifty: pd.DataFrame, vix: pd.DataFrame, ts: pd.Timestamp) -> dict:
