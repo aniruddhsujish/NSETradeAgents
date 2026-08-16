@@ -92,6 +92,8 @@ def run_scan():
         ind = (final_state.get("technical_signals") or {}).get("indicators") or {}
         bands = final_state.get("rules_bands") or {}
 
+        veto = final_state.get("veto_result") or {}
+
         with get_db() as db:
             db.add(
                 DecisionRecord(
@@ -111,6 +113,11 @@ def run_scan():
                     day_change_pct=ind.get("day_change_pct"),
                     entered=executed,
                     block_reason=block_reason,
+                    veto_verdict=veto.get("verdict"),
+                    veto_reason=veto.get("reason"),
+                    veto_cited_fact=veto.get("cited_fact"),
+                    veto_source_url=veto.get("source_url"),
+                    veto_checked=veto.get("checked"),
                 )
             )
         if executed:

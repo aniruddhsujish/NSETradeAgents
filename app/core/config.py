@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     Any field can be overridden from .env. Defaults here are the source of
     truth — .env.example deliberately does not repeat them.
     """
+
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
     )
@@ -18,6 +19,7 @@ class Settings(BaseSettings):
     tavily_api_key: str | None = None
     llm_model_fast: str = "claude-haiku-4-5-20251001"
     llm_model_smart: str = "claude-sonnet-4-6"
+    llm_model_veto: str = "claude-opus-5"
 
     # Portfolio
     starting_capital: float = 200000
@@ -71,6 +73,9 @@ class Settings(BaseSettings):
     trail_min_pct: float = 0.05  # floor for ATR-based trail
     trail_max_pct: float = 0.08  # cap for ATR-based trail
     max_hybrid_positions: int = 3
+
+    # Veto config
+    veto_mode: str = "shadow"  # off | shadow | acting
 
 
 settings: Settings = Settings()

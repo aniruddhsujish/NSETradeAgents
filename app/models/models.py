@@ -8,6 +8,7 @@ from app.core.database import Base
 
 class Trade(Base):
     """A position, open or closed. The authoritative record of what was traded."""
+
     __tablename__ = "trades"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -44,6 +45,7 @@ class PortfolioSnapshot(Base):
 
     Drives the equity chart and the circuit breaker's drawdown check.
     """
+
     __tablename__ = "portfolio_snapshots"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -59,8 +61,6 @@ class PortfolioSnapshot(Base):
     )
 
 
-
-
 class DecisionRecord(Base):
     """One row per candidate the scan evaluated, whether it was bought or not.
 
@@ -69,6 +69,7 @@ class DecisionRecord(Base):
     by the post-mortem, so passed-over candidates can be judged alongside
     the ones that were traded.
     """
+
     __tablename__ = "decision_records"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -95,10 +96,12 @@ class DecisionRecord(Base):
     entered: Mapped[bool] = mapped_column(Boolean, default=False)
     block_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    # veto — empty until the agent exists
+    # veto — null for candidates that never reached it
     veto_verdict: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
-    veto_evidence_type: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    veto_reason: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     veto_cited_fact: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    veto_source_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    veto_checked: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # outcome — empty until the post-mortem fills it
     outcome_pnl_pct: Mapped[Optional[float]] = mapped_column(nullable=True)

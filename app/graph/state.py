@@ -32,3 +32,4 @@ class TradingState(TypedDict):
     trade_result: dict | None
     rules_score: int | None
     rules_bands: dict | None
+    veto_result: dict | None

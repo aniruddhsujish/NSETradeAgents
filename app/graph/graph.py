@@ -6,9 +6,11 @@ from app.agents.fundamental import run_fundamental_check
 from app.agents.market_context import fetch_market_context
 from app.agents.technical import run_technical_analysis
 from app.agents.risk import run_risk_check
+from app.agents.veto import run_veto
 from app.core.config import settings
 from app.utils.scoring import compute_rules_confidence
 from app.utils.market_data import safe_yf_download
+from datetime import date
 
 logger = structlog.get_logger()
 
@@ -124,9 +126,16 @@ def blocked_node(state: TradingState) -> dict:
     risk = state.get("risk_result") or {}
     score = state.get("rules_score")
     bands = state.get("rules_bands") or {}
+    veto = state.get("veto_result") or {}
+    veto_reasons = (
+        [f"Veto {veto['reason']}: {veto['cited_fact']}"]
+        if veto.get("verdict") == "KILL"
+        else []
+    )
     reasons = (
         fundamental.get("block_reasons")
         or risk.get("block_reasons")
+        or veto_reasons
         or [
             f"Rules score {score} < {settings.rules_confidence_threshold:g} "
             + ", ".join(f"{k}={v}" for k, v in bands.items())
@@ -144,6 +153,34 @@ def fetch_price_node(state: TradingState) -> dict:
     ind = tech.get("indicators") or {}
     price = ind.get("current_price", 0.0)
     return {"current_price": price}
+
+
+def veto_node(state: TradingState) -> dict:
+    """Search for a specific reason not to buy a candidate that cleared the gate.
+
+    Records its verdict either way; whether that verdict blocks the trade is
+    decided by `veto_mode` in routing, not here"""
+    ctx = state.get("market_context") or {}
+    info = state.get("ticker_info") or {}
+    ind = (state.get("technical_signals") or {}).get("indicators") or {}
+    symbol = state["ticker"].replace(".NS", "")
+
+    result = run_veto(
+        ticker=state["ticker"],
+        company_name=info.get("longName") or info.get("shortName") or symbol,
+        sector=ctx.get("sector", "Unknown"),
+        current_price=state["current_price"],
+        day_change_pct=ind.get("day_change_pct", 0.0),
+        as_of=date.today(),
+    )
+    logger.info(
+        "veto_done",
+        ticker=state["ticker"],
+        verdict=result["verdict"],
+        reason=result["reason"],
+        mode=settings.veto_mode,
+    )
+    return {"veto_result": result}
 
 
 def execute_node(state: TradingState) -> dict:
@@ -207,8 +244,19 @@ def route_after_risk(state: TradingState) -> str:
 
 
 def route_after_rules_gate(state: TradingState) -> str:
-    """Buy if the score clears the threshold, otherwise stop."""
+    """Buy if the score clears the threshold — via the veto unless it's off."""
     if (state.get("rules_score") or 0) < settings.rules_confidence_threshold:
+        return "blocked"
+    if settings.veto_mode == "off":
+        return "execute"
+    return "veto"
+
+
+def route_after_veto(state: TradingState) -> str:
+    """Only `acting` mode lets a KILL block the trade; shadow just records it"""
+    if settings.veto_mode != "acting":
+        return "execute"
+    if (state.get("veto_result") or {}).get("verdict") == "KILL":
         return "blocked"
     return "execute"
 
@@ -225,6 +273,7 @@ def build_graph():
     graph.add_node("fetch_price", fetch_price_node)
     graph.add_node("risk", risk_node)
     graph.add_node("rules_gate", rules_gate_node)
+    graph.add_node("veto", veto_node)
     graph.add_node("blocked", blocked_node)
     graph.add_node("execute", execute_node)
 
@@ -249,7 +298,11 @@ def build_graph():
     graph.add_conditional_edges(
         "rules_gate",
         route_after_rules_gate,
-        {"blocked": "blocked", "execute": "execute"},
+        {"blocked": "blocked", "veto": "veto", "execute": "execute"},
+    )
+
+    graph.add_conditional_edges(
+        "veto", route_after_veto, {"blocked": "blocked", "execute": "execute"}
     )
 
     graph.add_edge("blocked", END)
@@ -289,5 +342,6 @@ def analyze_ticker(
         "open_position_sectors": open_position_sectors,
         "rules_score": None,
         "rules_bands": None,
+        "veto_result": None,
     }
     return trading_graph.invoke(initial_state)
