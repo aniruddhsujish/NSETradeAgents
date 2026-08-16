@@ -1,6 +1,6 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
-from sqlalchemy import String, Text, Float, Integer, Boolean, DateTime
+from sqlalchemy import Date, String, Text, Float, Integer, Boolean, DateTime
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 from app.core.database import Base
@@ -71,27 +71,41 @@ class DecisionRecord(Base):
     __tablename__ = "decision_records"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    as_of: Mapped[date] = mapped_column(Date)
     ticker: Mapped[str] = mapped_column(String(20))
-    evaluated_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime, server_default=func.now()
-    )
+    git_sha: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
 
-    action: Mapped[str] = mapped_column(String(10))
-    confidence: Mapped[Optional[float]] = mapped_column(nullable=True)
-    executed: Mapped[bool] = mapped_column(Boolean, default=False)
-
-    signal_alignment: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    # scoring — null if blocked before we got this far
+    score: Mapped[Optional[int]] = mapped_column(nullable=True)
     entry_timing: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     momentum_quality: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     risk_reward_view: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
-    setup_concern: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
-    kill_case: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    market_regime: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
 
+    # what the stock looked like that day
+    price: Mapped[Optional[float]] = mapped_column(nullable=True)
+    rsi: Mapped[Optional[float]] = mapped_column(nullable=True)
+    atr_pct: Mapped[Optional[float]] = mapped_column(nullable=True)
+    volume_ratio: Mapped[Optional[float]] = mapped_column(nullable=True)
+    momentum_5d: Mapped[Optional[float]] = mapped_column(nullable=True)
+    day_change_pct: Mapped[Optional[float]] = mapped_column(nullable=True)
+
+    # what we did
+    entered: Mapped[bool] = mapped_column(Boolean, default=False)
     block_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    rules_score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    entry_price: Mapped[Optional[float]] = mapped_column(nullable=True)
 
-    close_price: Mapped[Optional[float]] = mapped_column(nullable=True)
-    pnl_pct: Mapped[Optional[float]] = mapped_column(nullable=True)
-    close_reason: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
-    closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # veto — empty until the agent exists
+    veto_verdict: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    veto_evidence_type: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    veto_cited_fact: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # outcome — empty until the post-mortem fills it
+    outcome_pnl_pct: Mapped[Optional[float]] = mapped_column(nullable=True)
+    outcome_reason: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    outcome_filled_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True
+    )
+
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, server_default=func.now()
+    )

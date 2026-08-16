@@ -7,7 +7,7 @@ import structlog
 from app.backtest.store import BacktestStore
 from app.agents.technical import _compute_signal
 from app.core.config import settings
-from app.portfolio.exits import Bar, PositionView, evaluate_exit
+from app.portfolio.exits import Bar, PositionView, evaluate_exit, update_trail
 from app.screener.filters import evaluate_candidate, regime_blocked
 from app.utils.indicators import compute_indicators
 from app.utils.scoring import compute_rules_confidence
@@ -205,26 +205,23 @@ def run_backtest(
                 continue
             close_p = float(bars.at[ts, "Close"])
 
-            new_peak = max(pos.peak_price, close_p)
-            pos.peak_price = new_peak
+            was_trailing = pos.trail_stop > 0
 
-            if close_p < pos.entry_price * (1 + settings.trail_activation_pct):
-                continue
-
-            trail_pct = (
-                min(
-                    max(2.0 * pos.atr_pct / 100, settings.trail_min_pct),
-                    settings.trail_max_pct,
-                )
-                if pos.atr_pct > 0
-                else settings.trail_min_pct
+            pos.peak_price, new_trail, active = update_trail(
+                close=close_p,
+                entry_price=pos.entry_price,
+                atr_pct=pos.atr_pct,
+                peak_price=pos.peak_price,
+                trail_stop=pos.trail_stop,
+                stop_price=pos.stop_price,
             )
-            new_trail = max(new_peak * (1 - trail_pct), pos.trail_stop)
-            new_trail = max(new_trail, pos.stop_price)  # never trail below initial stop
+            if not active and not was_trailing:
+                continue
             pos.trail_stop = new_trail
 
             if (
-                hybrid_mode
+                active
+                and hybrid_mode
                 and not pos.hybrid_active
                 and hybrid_count < settings.max_hybrid_positions
             ):

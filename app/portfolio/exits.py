@@ -27,9 +27,7 @@ class PositionView:
     hybrid_active: bool = False
 
 
-def evaluate_exit(
-    pos: PositionView, bar: Bar, today: date
-) -> tuple[float, str] | None:
+def evaluate_exit(pos: PositionView, bar: Bar, today: date) -> tuple[float, str] | None:
     """Single source of truth for whether a position exits, and at what price.
 
     Returns (exit_price, reason) or None to hold.
@@ -52,3 +50,25 @@ def evaluate_exit(
     if (not pos.hybrid_active) and days_held >= settings.max_hold_days:
         return bar.close, "timeout"
     return None  # hold
+
+
+def update_trail(
+    *,
+    close: float,
+    entry_price: float,
+    atr_pct: float,
+    peak_price: float,
+    trail_stop: float,
+    stop_price: float,
+) -> tuple[float, float, bool]:
+    peak = max(peak_price, close)
+    active = close >= entry_price * (1 + settings.trail_activation_pct)
+    if not active:
+        return peak, trail_stop, False
+    trail_pct = (
+        min(max(2.0 * atr_pct / 100, settings.trail_min_pct), settings.trail_max_pct)
+        if atr_pct > 0
+        else settings.trail_min_pct
+    )
+    new_trail = max(peak * (1 - trail_pct), trail_stop, stop_price)
+    return peak, new_trail, True

@@ -1,3 +1,5 @@
+from datetime import date
+
 import structlog
 from app import portfolio
 from app.core.logging import setup_logging
@@ -9,8 +11,22 @@ from app.screener.filters import screen
 from app.graph.graph import analyze_ticker
 from app.portfolio.simulator import simulator
 
+import subprocess
+
 setup_logging()
 logger = structlog.get_logger()
+
+
+def _git_sha() -> str | None:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"], text=True
+        ).strip()
+    except Exception:
+        return None
+
+
+GIT_SHA = _git_sha()
 
 
 def run_scan():
@@ -66,16 +82,28 @@ def run_scan():
         block_reasons = trade_result.get("reasons")
         block_reason = ", ".join(block_reasons) if block_reasons else None
 
+        ind = (final_state.get("technical_signals") or {}).get("indicators") or {}
+        bands = final_state.get("rules_bands") or {}
+
         with get_db() as db:
             db.add(
                 DecisionRecord(
+                    as_of=date.today(),
                     ticker=ticker,
-                    action=trade_result.get("action") or "BLOCKED",
-                    confidence=rules_score,
-                    executed=executed,
+                    git_sha=GIT_SHA,
+                    score=final_state.get("rules_score"),
+                    entry_timing=bands.get("entry_timing"),
+                    momentum_quality=bands.get("momentum_quality"),
+                    risk_reward_view=bands.get("risk_reward_view"),
+                    market_regime=bands.get("market_regime"),
+                    price=ind.get("current_price"),
+                    rsi=ind.get("rsi"),
+                    atr_pct=ind.get("atr_pct"),
+                    volume_ratio=ind.get("volume_ratio"),
+                    momentum_5d=ind.get("momentum_5d"),
+                    day_change_pct=ind.get("day_change_pct"),
+                    entered=executed,
                     block_reason=block_reason,
-                    rules_score=rules_score,
-                    entry_price=trade_result.get("price") if executed else None,
                 )
             )
         if executed:

@@ -10,7 +10,8 @@ from apscheduler.triggers.interval import IntervalTrigger
 from app.core.logging import setup_logging
 from app.core.database import init_db
 from app.core.config import settings
-from app.portfolio.exits import Bar, PositionView, evaluate_exit
+from app.portfolio.exits import Bar, PositionView, evaluate_exit, update_trail
+from app.portfolio.postmortem import fill_outcomes
 from app.portfolio.simulator import simulator
 from app.utils.market_data import safe_yf_download, extract_ticker_df
 
@@ -173,24 +174,19 @@ def review_trail_eod() -> None:
         hybrid_active = position.get("hybrid_active", False)
         atr_pct = position.get("atr_pct") or 0
 
-        trail_pct = (
-            min(
-                max(2.0 * atr_pct / 100, settings.trail_min_pct), settings.trail_max_pct
-            )
-            if atr_pct
-            else settings.trail_min_pct
+        new_peak, new_trail_stop, active = update_trail(
+            close=close_price,
+            entry_price=entry_price,
+            atr_pct=atr_pct,
+            peak_price=peak_price,
+            trail_stop=trail_stop_val,
+            stop_price=position["stop_loss"],
         )
 
-        trail_eligible = close_price >= entry_price * (
-            1 + settings.trail_activation_pct
-        )
         is_already_trail = peak_price > 0
 
-        if not trail_eligible:
+        if not active and not is_already_trail:
             continue
-
-        new_peak = max(peak_price, close_price)
-        new_trail_stop = max(new_peak * (1 - trail_pct), trail_stop_val)
 
         if not is_already_trail:
             should_be_hybrid = hybrid_active_count < settings.max_hybrid_positions
@@ -248,6 +244,12 @@ def create_scheduler() -> BackgroundScheduler:
         review_trail_eod,
         CronTrigger(day_of_week="mon-fri", hour=15, minute=35, timezone=IST),
         name="trail_eod_review",
+    )
+
+    sched.add_job(
+        fill_outcomes,
+        CronTrigger(day_of_week="mon-fri", hour=16, minute=0, timezone=IST),
+        name="postmortem",
     )
 
     logger.info(
