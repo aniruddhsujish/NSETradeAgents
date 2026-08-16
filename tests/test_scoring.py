@@ -1,6 +1,5 @@
 import pytest
 from app.utils.scoring import (
-    compute_rules_confidence,
     _rules_entry_timing,
     _rules_momentum_quality,
     _rules_risk_reward,
@@ -26,25 +25,6 @@ def patch_scoring_settings(monkeypatch):
     )
     monkeypatch.setattr("app.utils.scoring.settings.resistance_proximity_pct", 0.02)
 
-
-# ── Shared fixtures ───────────────────────────────────────────────────────────
-
-BEST_DECISION = {
-    "signal_alignment": "STRONG",  # 30
-    "entry_timing": "IDEAL",  # 25
-    "momentum_quality": "STRONG",  # 20
-    "risk_reward_view": "FAVORABLE",  # 15
-    "setup_concern": "NONE",  # 10
-}  # base = 100
-
-NEUTRAL_CTX = {
-    "nifty_day_pct": 0.0,
-    "sector_day_pct": 0.0,
-    "divergence_note": "",
-    "india_vix": 15.0,
-    "nifty_10d_pct": 0.0,
-    "nifty_20d_pct": 0.0,
-}
 
 GOOD_TIMING_IND = {
     "rsi": 62.0,

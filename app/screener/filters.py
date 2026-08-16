@@ -57,7 +57,12 @@ def evaluate_candidate(ind: dict) -> tuple[dict | None, str]:
 
 
 def regime_blocked(index_close: pd.Series | None) -> bool:
-    """True when the index is below it's regime SMA - block new entries"""
+    """True when the index is below its regime moving average, meaning no new
+    entries today.
+
+    Fails open: missing, short or malformed data never blocks trading, since
+    a silently halted bot looks exactly like a quiet market.
+    """
     if index_close is None:
         return False
     try:
@@ -70,19 +75,11 @@ def regime_blocked(index_close: pd.Series | None) -> bool:
 
 
 def screen(tickers: list[str]) -> list[dict]:
-    """
-    Download price/volume data for all tickers at once and apply
-    math filters. Returns ranked list of candidates.
+    """Run the full universe through the regime gate and the screener filters.
 
-    config keys:
-        min_volume_ratio      float  e.g. 2.0  (today vs 20d avg)
-        min_volume_shares     int    e.g. 50000
-        min_avg_daily_value   float  e.g. 2_00_00_000  (₹2 crore liquidity floor)
-        max_day_change_pct    float  e.g. 8.0  (skip stocks that already ran)
-        min_price             float  e.g. 100.0
-        min_atr_pct           float  e.g. 1.5
-        rsi_min               float  e.g. 55.0
-        rsi_max               float  e.g. 70.0
+    Downloads every ticker in one batch, then applies `evaluate_candidate` to
+    each. Returns survivors sorted best-first by ranking score, or an empty
+    list if the regime gate is closed.
     """
     try:
         _nifty = safe_yf_download("^NSEI", period="60d")

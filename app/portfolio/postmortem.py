@@ -13,9 +13,12 @@ logger = structlog.get_logger()
 
 
 def _simulate(record, bars) -> tuple[float, str] | None:
-    """Pretend we bought this the next morning and run the normal exit rules.
+    """Replay what a decision would have returned, had it been traded.
 
-    Returns (pnl_pct, reason) or None if there isn't enough history"""
+    Buys at the open of the day after the decision and runs the same exit
+    rules as a real position. Returns (pnl_pct, reason), or None when the
+    trade hasn't resolved yet and should be retried later.
+    """
 
     after = bars.loc[bars.index.date > record.as_of]
     if len(after) < 2:
@@ -64,7 +67,13 @@ def _simulate(record, bars) -> tuple[float, str] | None:
 
 
 def fill_outcomes() -> int:
-    """Fill in outcome of decisions that are past the 21 day period"""
+    """Work out what happened to decisions that are old enough to judge.
+
+    Covers stocks that were bought and stocks that were passed over, so both
+    are measured the same way. Records that haven't resolved stay pending.
+
+    Returns how many were filled in.
+    """
     cutoff = date.today() - timedelta(days=settings.max_hold_days + 5)
 
     with get_db() as db:

@@ -9,6 +9,12 @@ DIMENSION_SCORES = {
 
 
 def _rules_entry_timing(ind: dict) -> str:
+    """Grade today as an entry point: IDEAL, ACCEPTABLE or POOR.
+
+    Any hard disqualifier (a large day move, thin volume, or price sitting on
+    a round number) forces POOR. Otherwise the band comes from how many of
+    the four ideal conditions hold.
+    """
     rsi = ind.get("rsi", 50)
     macd_hist = ind.get("macd_hist", 0)
     macd_hist_prev = ind.get("macd_hist_prev", 0)
@@ -42,6 +48,11 @@ def _rules_entry_timing(ind: dict) -> str:
 
 
 def _rules_momentum_quality(ind: dict, entry_timing: str) -> str:
+    """Grade whether momentum is building or fading: STRONG, MODERATE or WEAK.
+
+    STRONG also requires an IDEAL entry: textbook momentum arrived at too
+    late is downgraded to MODERATE.
+    """
     rsi = ind.get("rsi", 50)
     macd_hist_trend = ind.get("macd_hist_trend", "mixed")
     momentum_5d = ind.get("momentum_5d", 0)
@@ -58,6 +69,10 @@ def _rules_momentum_quality(ind: dict, entry_timing: str) -> str:
 
 
 def _rules_risk_reward(risk: dict, current_price: float) -> str:
+    """Grade reward against risk: FAVORABLE, NEUTRAL or UNFAVORABLE.
+
+    Falls back to NEUTRAL when the stop or target is missing or nonsensical.
+    """
     stop_loss = risk.get("stop_loss", 0)
     take_profit = risk.get("take_profit", 0)
     if not stop_loss or not take_profit or current_price <= stop_loss:
@@ -71,6 +86,13 @@ def _rules_risk_reward(risk: dict, current_price: float) -> str:
 
 
 def _rules_market_regime(market_context: dict | None) -> str:
+    """Grade the market backdrop: FAVORABLE, NEUTRAL or HOSTILE.
+
+    High VIX or a falling Nifty over 20 days is an outright disqualifier.
+    Otherwise the band comes from a count of softer warnings, where a stock
+    rising while its sector falls cancels the weak-sector warning and can
+    earn back the top band.
+    """
     ctx = market_context or {}
     india_vix = ctx.get("india_vix") or 0
     nifty_day = ctx.get("nifty_day_pct") or 0

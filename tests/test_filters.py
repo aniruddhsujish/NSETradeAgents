@@ -1,6 +1,6 @@
 import pytest
 import pandas as pd
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from app.screener.filters import screen, regime_blocked
 
 SCREENER_SETTINGS = {

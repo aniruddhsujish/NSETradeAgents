@@ -4,7 +4,7 @@ from unittest.mock import patch
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from app.core.database import Base
-from app.models.models import Trade, PortfolioSnapshot  # noqa: F401
+from app.models import models  # noqa: F401  (registers tables on Base)
 
 
 @pytest.fixture

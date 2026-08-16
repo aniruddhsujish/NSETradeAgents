@@ -7,12 +7,17 @@ log_buffer: deque = deque(maxlen=500)
 
 
 class _BufferProcessor:
+    """structlog processor that keeps recent log lines in memory.
+
+    Feeds the dashboard's live log stream without needing a log file.
+    """
     def __call__(self, logger, method, event_dict):
         log_buffer.append(dict(event_dict))
         return event_dict
 
 
 def setup_logging(level: str = "INFO"):
+    """Configure structlog for console output plus the in-memory buffer."""
     logging.basicConfig(
         format="%(message)s", stream=sys.stdout, level=getattr(logging, level)
     )

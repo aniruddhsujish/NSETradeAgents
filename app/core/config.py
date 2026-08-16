@@ -3,13 +3,19 @@ from pydantic import Field
 
 
 class Settings(BaseSettings):
+    """All tunable parameters, with the values the backtest was measured on.
+
+    Any field can be overridden from .env. Defaults here are the source of
+    truth — .env.example deliberately does not repeat them.
+    """
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
     )
 
-    # LLM
-    anthropic_api_key: str
-    tavily_api_key: str
+    # LLM — unused while the pipeline is fully deterministic; the veto agent
+    # will need these again. Optional so the app starts without them.
+    anthropic_api_key: str | None = None
+    tavily_api_key: str | None = None
     llm_model_fast: str = "claude-haiku-4-5-20251001"
     llm_model_smart: str = "claude-sonnet-4-6"
 

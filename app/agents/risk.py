@@ -14,6 +14,15 @@ def run_risk_check(
     ticker_sector: str = "Unknown",
     open_position_sectors: list[str] | None = None,
 ) -> dict:
+    """Apply the hard risk gates and size the position.
+
+    Gates, in order: portfolio already full, price too high or position too
+    small to be worth taking, and more than two positions in one sector.
+    Sizing is a fixed fraction of starting capital, with an ATR-based stop.
+
+    Returns {approved, block_reasons, quantity, position_size_inr,
+    stop_loss, take_profit, notes}.
+    """
     logger.info("risk_start", ticker=ticker, price=current_price)
 
     if current_price <= 0:

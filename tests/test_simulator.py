@@ -1,4 +1,3 @@
-import pytest
 from app.portfolio.simulator import PortfolioSimulator
 
 TRADE_RESULT = {

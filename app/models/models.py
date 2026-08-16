@@ -1,12 +1,13 @@
 from datetime import date, datetime
 from typing import Optional
-from sqlalchemy import Date, String, Text, Float, Integer, Boolean, DateTime
+from sqlalchemy import Date, String, Text, Boolean, DateTime
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 from app.core.database import Base
 
 
 class Trade(Base):
+    """A position, open or closed. The authoritative record of what was traded."""
     __tablename__ = "trades"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -39,6 +40,10 @@ class Trade(Base):
 
 
 class PortfolioSnapshot(Base):
+    """Portfolio value at a point in time.
+
+    Drives the equity chart and the circuit breaker's drawdown check.
+    """
     __tablename__ = "portfolio_snapshots"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -54,20 +59,16 @@ class PortfolioSnapshot(Base):
     )
 
 
-class WatchlistStock(Base):
-    __tablename__ = "watchlist"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    ticker: Mapped[str] = mapped_column(String(20), unique=True)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    added_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    added_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime, server_default=func.now()
-    )
-    last_analysed_at: Mapped[Optional[datetime]]
 
 
 class DecisionRecord(Base):
+    """One row per candidate the scan evaluated, whether it was bought or not.
+
+    Holds the score and the band each dimension landed in, the indicators at
+    the time, and space for the veto's verdict. `outcome_*` is filled in later
+    by the post-mortem, so passed-over candidates can be judged alongside
+    the ones that were traded.
+    """
     __tablename__ = "decision_records"
 
     id: Mapped[int] = mapped_column(primary_key=True)

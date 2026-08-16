@@ -21,6 +21,7 @@ logger = structlog.get_logger()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Initialise the database and start the scheduler alongside the API."""
     init_db()
     scheduler = create_scheduler()
     scheduler.start()
@@ -36,6 +37,7 @@ templates = Jinja2Templates(directory="app/templates")
 
 @app.get("/", response_class=HTMLResponse)
 def overview(request: Request):
+    """Dashboard home: portfolio value, P&L and the equity chart."""
     with get_db() as db:
         raw = (
             db.query(PortfolioSnapshot)
@@ -68,6 +70,7 @@ def overview(request: Request):
 @app.get("/positions", response_class=HTMLResponse)
 def positions(request: Request):
 
+    """Open positions with live prices and progress toward stop and target."""
     with get_db() as db:
         open_trades = (
             db.query(Trade)
@@ -108,6 +111,7 @@ def positions(request: Request):
 @app.get("/history", response_class=HTMLResponse)
 def history(request: Request):
 
+    """Closed trades with win rate and profit statistics."""
     with get_db() as db:
         closed_trades = (
             db.query(Trade)
@@ -150,6 +154,7 @@ def history(request: Request):
 
 @app.get("/logs", response_class=HTMLResponse)
 def logs(request: Request):
+    """Live log viewer page."""
     entries = list(reversed(list(log_buffer)))[:200]
     return templates.TemplateResponse(
         request=request, name="logs.html", context={"entries": entries}
@@ -158,7 +163,10 @@ def logs(request: Request):
 
 @app.get("/api/logs/stream")
 async def stream_logs():
+    """Server-sent events stream of new log lines for the live log page."""
+
     async def event_generator():
+        """Yield log lines as they appear, polling the in-memory buffer."""
         sent = max(0, len(log_buffer) - 50)
         while True:
             current = len(log_buffer)
@@ -177,6 +185,7 @@ async def stream_logs():
 
 @app.get("/api/snapshots")
 def api_snapshots():
+    """Portfolio snapshots as JSON, for the equity chart."""
     with get_db() as db:
         snapshots = (
             db.query(PortfolioSnapshot)

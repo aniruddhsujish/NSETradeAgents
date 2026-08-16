@@ -14,7 +14,11 @@ logger = structlog.get_logger()
 
 
 def fetch_data_node(state: TradingState) -> dict:
-    """Download all yfinance data once before parallel agents run."""
+    """Download every price series the pipeline needs, once.
+
+    Fetching here rather than inside each node avoids duplicate requests when
+    the graph fans out.
+    """
     ticker = state["ticker"]
     logger.info("fetch_data_start", ticker=ticker)
 
@@ -54,11 +58,13 @@ def fetch_data_node(state: TradingState) -> dict:
 
 
 def fundamental_node(state: TradingState) -> dict:
+    """Run the fundamental checks on the ticker."""
     result = run_fundamental_check(state["ticker"], state.get("ticker_info"))
     return {"fundamental_result": result}
 
 
 def market_context_node(state: TradingState) -> dict:
+    """Gather index, sector and volatility context for the ticker."""
     ctx = fetch_market_context(
         state["ticker"],
         ticker_df=state.get("ticker_df"),
@@ -70,6 +76,7 @@ def market_context_node(state: TradingState) -> dict:
 
 
 def technical_node(state: TradingState) -> dict:
+    """Compute indicators and the technical signal."""
     signals = run_technical_analysis(
         state["ticker"],
         ticker_df=state.get("ticker_df"),
@@ -78,6 +85,7 @@ def technical_node(state: TradingState) -> dict:
 
 
 def risk_node(state: TradingState) -> dict:
+    """Apply the risk gates and size the position."""
     tech = state.get("technical_signals") or {}
     ctx = state.get("market_context") or {}
     atr_pct = (tech.get("indicators") or {}).get("atr_pct")
@@ -95,6 +103,7 @@ def risk_node(state: TradingState) -> dict:
 
 
 def rules_gate_node(state: TradingState) -> dict:
+    """Score the setup 0-100 and record which band each dimension landed in."""
     result = compute_rules_confidence(
         technical=state.get("technical_signals") or {},
         risk=state.get("risk_result") or {},
@@ -106,6 +115,11 @@ def rules_gate_node(state: TradingState) -> dict:
 
 
 def blocked_node(state: TradingState) -> dict:
+    """Record why a candidate was rejected.
+
+    Uses the first reason available: fundamental, then risk, then the score
+    falling short of the threshold.
+    """
     fundamental = state.get("fundamental_result") or {}
     risk = state.get("risk_result") or {}
     score = state.get("rules_score")
@@ -125,7 +139,7 @@ def blocked_node(state: TradingState) -> dict:
 
 
 def fetch_price_node(state: TradingState) -> dict:
-    """Extract current price from technical indicators after analysis"""
+    """Lift the current price out of the computed indicators."""
     tech = state.get("technical_signals") or {}
     ind = tech.get("indicators") or {}
     price = ind.get("current_price", 0.0)
@@ -133,6 +147,10 @@ def fetch_price_node(state: TradingState) -> dict:
 
 
 def execute_node(state: TradingState) -> dict:
+    """Record the buy.
+
+    Only simulated trades are supported; live order placement raises.
+    """
     risk = state.get("risk_result") or {}
     market_ctx = state.get("market_context") or {}
     ticker = state["ticker"]
@@ -173,6 +191,7 @@ def execute_node(state: TradingState) -> dict:
 
 
 def route_after_fundamental(state: TradingState) -> list[str]:
+    """Fan out to the analysis nodes, or stop if the fundamentals failed."""
     result = state.get("fundamental_result") or {}
     if not result.get("approved", True):
         return ["blocked"]
@@ -180,7 +199,7 @@ def route_after_fundamental(state: TradingState) -> list[str]:
 
 
 def route_after_risk(state: TradingState) -> str:
-    """If risk blocked, skip scoring entirely"""
+    """Continue to scoring, or stop if a risk gate blocked the trade."""
     risk = state.get("risk_result") or {}
     if not risk.get("approved"):
         return "blocked"
@@ -188,12 +207,14 @@ def route_after_risk(state: TradingState) -> str:
 
 
 def route_after_rules_gate(state: TradingState) -> str:
+    """Buy if the score clears the threshold, otherwise stop."""
     if (state.get("rules_score") or 0) < settings.rules_confidence_threshold:
         return "blocked"
     return "execute"
 
 
 def build_graph():
+    """Wire up and compile the pipeline."""
     graph = StateGraph(TradingState)
 
     # Register nodes
@@ -246,7 +267,11 @@ def analyze_ticker(
     open_positions: int,
     open_position_sectors: list[str],
 ) -> dict:
-    """Entry point - run the full pipeline for a single ticker"""
+    """Run one ticker through the pipeline.
+
+    Returns the final state, which holds the score, the dimension bands and
+    the trade result.
+    """
     initial_state: TradingState = {
         "ticker": ticker,
         "portfolio_cash": portfolio_cash,

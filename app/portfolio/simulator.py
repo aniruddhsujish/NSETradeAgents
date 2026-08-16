@@ -9,9 +9,10 @@ logger = structlog.get_logger()
 
 
 class PortfolioSimulator:
-    """Paper trading portfolio - all state persists in the DB"""
+    """Paper-trading portfolio. All state lives in the database."""
 
     def _compute_cash(self, db) -> float:
+        """Cash available: starting capital, less what's invested, plus realised P&L."""
         open_invested = sum(
             t.entry_value for t in db.query(Trade).filter(Trade.status == "open").all()
         )
@@ -23,6 +24,7 @@ class PortfolioSimulator:
         return settings.starting_capital - open_invested + realised_pnl
 
     def get_portfolio_state(self) -> dict:
+        """Current cash, open position count, and the open positions themselves."""
         with get_db() as db:
             open_trades = db.query(Trade).filter(Trade.status == "open").all()
             cash = self._compute_cash(db)
@@ -54,6 +56,11 @@ class PortfolioSimulator:
         trade_result: dict,
         technical: dict,
     ) -> Trade | None:
+        """Open a position from an executed trade result.
+
+        Refuses duplicates of a ticker already held, and refuses trades there
+        isn't cash for. Returns the new trade, or None if it was refused.
+        """
         ticker = trade_result["ticker"]
         logger.info("simulator_open_trade", ticker=ticker)
 
@@ -108,6 +115,10 @@ class PortfolioSimulator:
             return trade
 
     def close_trade(self, ticker: str, close_price: float, reason: str) -> Trade | None:
+        """Close an open position and record its realised P&L.
+
+        Returns the closed trade, or None if the ticker wasn't held.
+        """
         logger.info(
             "simulator_close_trade",
             ticker=ticker,
@@ -154,6 +165,7 @@ class PortfolioSimulator:
         trail_stop: float,
         hybrid_active: bool = False,
     ) -> None:
+        """Store a position's new peak price and trailing stop."""
         with get_db() as db:
             trade = (
                 db.query(Trade)
@@ -169,6 +181,11 @@ class PortfolioSimulator:
     def save_snapshot(
         self, open_prices: dict[str, float] | None = None
     ) -> PortfolioSnapshot:
+        """Record a point-in-time snapshot of portfolio value.
+
+        Pass `open_prices` to mark open positions to market; without it they are
+        valued at entry. Snapshots drive the equity chart and the circuit breaker.
+        """
         with get_db() as db:
             open_trades = db.query(Trade).filter(Trade.status == "open").all()
             closed_trades = db.query(Trade).filter(Trade.status == "closed").all()
@@ -226,6 +243,11 @@ class PortfolioSimulator:
     def is_circuit_breaker_active(
         self, days: int = 30, threshold: float = 0.08
     ) -> bool:
+        """True when the portfolio has fallen more than `threshold` from its peak
+        over the last `days`, which pauses new entries.
+
+        Needs at least two snapshots to judge, and returns False below that.
+        """
         from datetime import timedelta
 
         with get_db() as db:

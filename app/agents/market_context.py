@@ -23,8 +23,11 @@ SECTOR_MAP = {
 
 
 def _day_change_pct(ticker_sym: str, df: pd.DataFrame | None = None) -> float | None:
-    """Return today's % change for a given yfinance ticker symbol.
-    If df is provided (pre-fetched), uses it directly instead of downloading."""
+    """Today's percentage change for a ticker.
+
+    Uses `df` when supplied rather than downloading again. Returns None if
+    there aren't two closes to compare.
+    """
     try:
         if df is not None and len(df) >= 2:
             close = df["Close"].squeeze()

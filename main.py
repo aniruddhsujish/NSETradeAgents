@@ -1,7 +1,6 @@
 from datetime import date
 
 import structlog
-from app import portfolio
 from app.core.logging import setup_logging
 from app.core.database import init_db, get_db
 from app.models.models import DecisionRecord
@@ -18,6 +17,7 @@ logger = structlog.get_logger()
 
 
 def _git_sha() -> str | None:
+    """Short commit hash, recorded on decisions so results trace to code."""
     try:
         return subprocess.check_output(
             ["git", "rev-parse", "--short", "HEAD"], text=True
@@ -30,6 +30,13 @@ GIT_SHA = _git_sha()
 
 
 def run_scan():
+    """Run the daily scan: screen the universe, analyse candidates, open trades.
+
+    Writes a decision record for every candidate it evaluates, bought or not,
+    which is what makes rejected trades measurable later. Stops early if the
+    circuit breaker is active or the portfolio is full; a failure on one
+    ticker never abandons the rest.
+    """
     logger.info("scan_start")
 
     tickers = fetch_universe()
@@ -91,7 +98,7 @@ def run_scan():
                     as_of=date.today(),
                     ticker=ticker,
                     git_sha=GIT_SHA,
-                    score=final_state.get("rules_score"),
+                    score=rules_score,
                     entry_timing=bands.get("entry_timing"),
                     momentum_quality=bands.get("momentum_quality"),
                     risk_reward_view=bands.get("risk_reward_view"),

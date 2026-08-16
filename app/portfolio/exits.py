@@ -6,6 +6,12 @@ from app.core.config import settings
 
 @dataclass(frozen=True)
 class Bar:
+    """One price observation.
+
+    The backtest passes a real daily OHLC bar; live passes a single tick via
+    `flat()`. Writing the exit rules against one shape keeps both paths
+    identical.
+    """
     open: float
     high: float
     low: float
@@ -13,12 +19,16 @@ class Bar:
 
     @classmethod
     def flat(cls, price: float) -> "Bar":
+        """A bar for a single observed price, where open, high, low and close are equal."""
         return cls(price, price, price, price)
 
 
 @dataclass(frozen=True)
 class PositionView:
-    """The only fields the exit ladder needs"""
+    """The fields the exit rules need, independent of how a position is stored.
+
+    Lets the backtest's dataclass and the live DB row feed the same logic.
+    """
 
     entry_date: date
     stop_price: float
@@ -61,6 +71,15 @@ def update_trail(
     trail_stop: float,
     stop_price: float,
 ) -> tuple[float, float, bool]:
+    """Ratchet the trailing stop against a closing price.
+
+    The trail arms once the position is up by the activation threshold, then
+    follows the peak at a distance scaled to the stock's ATR. It never moves
+    down, and never sits below the original stop.
+
+    Returns (peak, trail_stop, active), where `active` means the position is
+    above the activation threshold today.
+    """
     peak = max(peak_price, close)
     active = close >= entry_price * (1 + settings.trail_activation_pct)
     if not active:

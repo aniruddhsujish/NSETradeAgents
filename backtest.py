@@ -3,6 +3,7 @@ from datetime import date
 
 
 def main():
+    """Command-line entry point: ingest if needed, run the backtest, print the report."""
     parser = argparse.ArgumentParser(description="Run NSE swing-trade backtest")
     parser.add_argument("--db", default="backtest_data.db")
     parser.add_argument(
@@ -40,6 +41,9 @@ def main():
 
 
 def _run_comparison(args):
+    """Run the backtest twice, with and without hybrid exits, and print the two
+    sets of results side by side.
+    """
     import math
     from app.backtest.engine import run_backtest, ClosedTrade
     from datetime import date as _date
@@ -54,6 +58,7 @@ def _run_comparison(args):
     trades_n, curve_n, _ = run_backtest(db_path=args.db, start=start, end=end, hybrid_mode=False)
 
     def _stats(trades: list[ClosedTrade], curve: list):
+        """Summary metrics for one variant: return, Sharpe, drawdown, win rate, exits."""
         if not curve:
             return {}
         sv, ev = curve[0][1], curve[-1][1]
@@ -121,6 +126,7 @@ def _run_comparison(args):
     print(f"  {'Avg hold days':<20} {h['avg_hold']:>9.1f}           {n['avg_hold']:>9.1f}")
 
     def _fmt_exits(e):
+        """Format the exit-reason counts as a single line."""
         return (f"stop={e.get('stop',0)} target={e.get('target',0)} "
                 f"timeout={e.get('timeout',0)} trail={e.get('trail',0)}")
     print(f"  {'Exits':<20} {_fmt_exits(h['exits'])}")

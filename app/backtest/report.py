@@ -7,12 +7,14 @@ from app.core.config import settings
 
 
 def _cagr(start_val: float, end_val: float, years: float) -> float:
+    """Compound annual growth rate between two portfolio values."""
     if years <= 0 or start_val <= 0:
         return 0.0
     return (end_val / start_val) ** (1 / years) - 1
 
 
 def _sharpe(daily_returns: list[float]) -> float:
+    """Annualised Sharpe ratio from daily returns, assuming a zero risk-free rate."""
     n = len(daily_returns)
     if n < 2:
         return 0.0
@@ -23,6 +25,7 @@ def _sharpe(daily_returns: list[float]) -> float:
 
 
 def _max_drawdown(equity_curve: list[tuple[date, float]]) -> float:
+    """Largest peak-to-trough fall in the equity curve, as a percentage."""
     peak = 0.0
     max_dd = 0.0
     for _, val in equity_curve:
@@ -35,6 +38,7 @@ def _max_drawdown(equity_curve: list[tuple[date, float]]) -> float:
 
 def _yearly_breakdown(trades: list[ClosedTrade], equity_curve: list[tuple[date, float]]):
     # Build year → (first_equity, last_equity) from the curve
+    """Print per-year return, trade count, win rate, profit factor and drawdown."""
     year_equity: dict[int, tuple[float, float]] = {}
     for dt, val in equity_curve:
         y = dt.year
@@ -82,6 +86,11 @@ def _yearly_breakdown(trades: list[ClosedTrade], equity_curve: list[tuple[date, 
 
 
 def _score_analysis(trades: list[ClosedTrade], all_scores: list[int]):
+    """Print how scores were distributed and how each score band performed.
+
+    Buckets are derived from the entry threshold rather than hardcoded, so
+    they stay meaningful when the threshold moves.
+    """
     threshold = int(settings.rules_confidence_threshold)
 
     # Buckets are derived, not hardcoded: the score scale and the entry
@@ -139,6 +148,11 @@ def print_report(
     all_scores: list[int] | None = None,
     csv_path: str = "backtest_trades.csv",
 ):
+    """Print the full backtest report and optionally write the trade log to CSV.
+
+    Covers headline metrics, the yearly breakdown, and the score analysis when
+    candidate scores are supplied.
+    """
     if not equity_curve:
         print("No equity curve - did not ingest run")
         return

@@ -7,6 +7,15 @@ FINANCIAL_SECTORS = {"Financial Services", "Banking"}
 
 
 def run_fundamental_check(ticker: str, ticker_info: dict | None) -> dict:
+    """Reject structurally broken companies before they reach scoring.
+
+    Checks market cap, debt/equity (skipped for financials, where leverage
+    is normal) and return on equity. Weak revenue growth is flagged but
+    never blocks. Missing data approves — an unknown company is not a
+    rejected one.
+
+    Returns {approved, block_reasons, notes}.
+    """
     logger.info("fundamental_start", ticker=ticker)
 
     if not ticker_info:

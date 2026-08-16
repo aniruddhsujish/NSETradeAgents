@@ -17,6 +17,7 @@ _BATCH_SIZE = 40
 
 
 def _ensure_schema(conn: sqlite3.Connection):
+    """Create the bars table and its index if they don't exist."""
     conn.execute("""
         CREATE TABLE IF NOT EXISTS bars (
             ticker TEXT NOT NULL,
@@ -36,6 +37,10 @@ def _ensure_schema(conn: sqlite3.Connection):
 
 
 def _save_df(conn: sqlite3.Connection, ticker: str, df: pd.DataFrame) -> int:
+    """Write one ticker's bars into the cache, skipping rows with no close.
+
+    Returns the number of rows written.
+    """
     if df is None or df.empty:
         return 0
     df = df.copy()
@@ -67,6 +72,12 @@ def _save_df(conn: sqlite3.Connection, ticker: str, df: pd.DataFrame) -> int:
 
 
 def run_ingest(db_path: str = "backtest_data.db", force: bool = False):
+    """Download the full history the backtest needs into a local SQLite cache.
+
+    Fetches the indices first, then the universe in batches. Skips entirely
+    if the database already exists unless `force` is set. This is slow and
+    meant to run once.
+    """
     if not force and Path(db_path).exists():
         logger.info("ingest_skip_existing", db_path=db_path)
         return

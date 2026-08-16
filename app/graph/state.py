@@ -3,6 +3,11 @@ from typing import Any, TypedDict
 
 class TradingState(TypedDict):
     # Input
+    """State passed between pipeline nodes.
+
+    Each node returns only the keys it sets. Note that keys not declared here
+    are silently discarded by LangGraph, so a typo loses data without error.
+    """
     ticker: str
     portfolio_cash: float
     open_positions: int

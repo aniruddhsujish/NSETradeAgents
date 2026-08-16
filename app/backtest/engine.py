@@ -17,6 +17,7 @@ logger = structlog.get_logger()
 
 @dataclass
 class Position:
+    """An open position during a backtest run."""
     ticker: str
     entry_date: date
     entry_price: float
@@ -33,6 +34,7 @@ class Position:
 
 @dataclass
 class ClosedTrade:
+    """A finished trade, as written to the trade log."""
     ticker: str
     entry_date: date
     exit_date: date
@@ -46,6 +48,10 @@ class ClosedTrade:
 
 
 def _check_exit(pos: Position, bar: pd.Series, today: date) -> tuple[float, str] | None:
+    """Adapt a backtest position and a pandas bar to the shared exit rules.
+
+    Keeps pandas out of `exits.py` so the same rules can serve the live path.
+    """
     return evaluate_exit(
         PositionView(
             entry_date=pos.entry_date,
@@ -65,6 +71,11 @@ def _check_exit(pos: Position, bar: pd.Series, today: date) -> tuple[float, str]
 
 
 def _market_context(nifty: pd.DataFrame, vix: pd.DataFrame, ts: pd.Timestamp) -> dict:
+    """Build the market context for one day from the index and VIX series.
+
+    Sector fields are empty: the cache holds no sector data, so sector rules
+    only take effect live.
+    """
     try:
         n = nifty.loc[:ts]["Close"]
         vix_val = float(vix.at[ts, "Close"]) if ts in vix.index else 0.0
@@ -100,6 +111,15 @@ def run_backtest(
     end: date = date(2025, 12, 31),
     hybrid_mode: bool = True,
 ) -> tuple[list[ClosedTrade], list[tuple[date, float]], list[int]]:
+    """Replay the strategy day by day over historical bars.
+
+    Each day, in order: fill yesterday's signals at today's open, check exits
+    against today's bar, update trailing stops on the close, then score new
+    candidates for tomorrow. Signals are always acted on the following day, so
+    no decision uses a price it could not have known.
+
+    Returns (closed_trades, equity_curve, all_candidate_scores).
+    """
     store = BacktestStore(db_path)
     trading_days = store.get_trading_days(start, end)
     warmup_start = date(start.year - 1, start.month, start.day)

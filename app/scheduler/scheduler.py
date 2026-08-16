@@ -8,7 +8,6 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from app.core.logging import setup_logging
-from app.core.database import init_db
 from app.core.config import settings
 from app.portfolio.exits import Bar, PositionView, evaluate_exit, update_trail
 from app.portfolio.postmortem import fill_outcomes
@@ -28,6 +27,7 @@ NSE_HEADERS = {
 
 @lru_cache(maxsize=1)
 def _load_nse_holidays(year: int) -> set[str]:
+    """Trading holidays for a year, from NSE's official list. Cached per year."""
     resp = requests.get(
         "https://www.nseindia.com/api/holiday-master?type=trading",
         headers=NSE_HEADERS,
@@ -40,6 +40,11 @@ def _load_nse_holidays(year: int) -> set[str]:
 
 
 def _is_market_open() -> bool:
+    """True during NSE trading hours on a working day.
+
+    If the holiday list can't be fetched, assumes the market is open rather
+    than skipping the day.
+    """
     now = datetime.now(IST)
 
     if now.weekday() >= 5:
@@ -61,6 +66,11 @@ def _is_market_open() -> bool:
 
 
 def review_positions() -> None:
+    """Check open positions against their exit rules using live prices.
+
+    Runs through the market day. Prices are single observations rather than
+    full bars, so intraday moves between checks are not seen.
+    """
     if not _is_market_open():
         logger.info("position_review_skipped", reason="market closed")
         return
@@ -130,6 +140,11 @@ def review_positions() -> None:
 
 
 def review_trail_eod() -> None:
+    """Advance trailing stops on the day's closing prices.
+
+    Also promotes newly eligible positions to hybrid mode, up to the cap, and
+    closes any position whose close has fallen through its trail.
+    """
     portfolio = simulator.get_portfolio_state()
     positions = portfolio["positions"]
 
@@ -228,6 +243,9 @@ def review_trail_eod() -> None:
 
 
 def create_scheduler() -> BackgroundScheduler:
+    """Build the job schedule: morning scan, intraday position checks, the
+    end-of-day trail update, and the post-mortem.
+    """
     from main import run_scan
 
     sched = BackgroundScheduler(timezone=IST)
