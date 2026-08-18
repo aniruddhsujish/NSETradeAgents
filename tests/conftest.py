@@ -15,6 +15,22 @@ def db_session():
         yield session
 
 
+@pytest.fixture(autouse=True)
+def reset_health_state():
+    """Clear the cached last-scan time between tests.
+
+    app.core.health keeps it in module state so /health never queries, which
+    means it leaks across tests unless reset.
+    """
+    from app.core import health
+
+    health._last_scan = None
+    health._loaded = False
+    yield
+    health._last_scan = None
+    health._loaded = False
+
+
 @pytest.fixture
 def mock_db(db_session):
     @contextmanager

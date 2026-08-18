@@ -1,9 +1,18 @@
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Optional
 from sqlalchemy import Date, String, Text, Boolean, DateTime
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 from app.core.database import Base
+
+
+def utcnow() -> datetime:
+    """Naive UTC, set by Python rather than the database.
+
+    server_default=func.now() is UTC on SQLite but server-local time on
+    Postgres — this keeps the value identical on both.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class Trade(Base):
@@ -113,3 +122,18 @@ class DecisionRecord(Base):
     created_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime, server_default=func.now()
     )
+
+
+class ScanRun(Base):
+    """One row per scan attempt, written whether or not it found anything.
+
+    Separates "ran and found nothing" from "never ran", which is the only
+    thing a health check actually needs to know.
+    """
+
+    __tablename__ = "scan_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ran_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    candidates_found: Mapped[int] = mapped_column(default=0)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

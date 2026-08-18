@@ -9,6 +9,7 @@ logger = structlog.get_logger()
 
 class Base(DeclarativeBase):
     """Declarative base every model inherits from."""
+
     pass
 
 
@@ -17,6 +18,7 @@ engine = create_engine(
     connect_args=(
         {"check_same_thread": False} if "sqlite" in settings.database_url else {}
     ),
+    pool_pre_ping=True,  # hosted Postgres drops idle connections; test before use
     echo=False,
 )
 

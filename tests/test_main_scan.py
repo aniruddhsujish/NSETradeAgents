@@ -10,7 +10,8 @@ from contextlib import contextmanager
 import pytest
 
 import main
-from app.models.models import DecisionRecord
+from app.core import health
+from app.models.models import DecisionRecord, ScanRun
 
 
 def candidate(ticker: str, score: float = 0.8) -> dict:
@@ -212,3 +213,100 @@ def test_one_bad_ticker_does_not_stop_the_scan(scan_env, monkeypatch):
 
     rows = records(scan_env)
     assert [r.ticker for r in rows] == ["B.NS"]
+
+
+# ── the heartbeat ────────────────────────────────────────────────────────────
+
+
+def runs(db):
+    return db.query(ScanRun).order_by(ScanRun.id).all()
+
+
+def test_scan_records_a_run_even_when_nothing_is_found(scan_env, monkeypatch):
+    """The reason ScanRun exists rather than counting DecisionRecords.
+
+    A quiet day writes no decisions, and so does a scheduler that never fired.
+    Without this row the health check cannot tell them apart.
+    """
+    monkeypatch.setattr(main, "screen", lambda t: [])
+
+    main.run_scan()
+
+    assert records(scan_env) == []
+    rows = runs(scan_env)
+    assert len(rows) == 1
+    assert rows[0].candidates_found == 0
+    assert rows[0].error is None
+    assert rows[0].ran_at is not None
+
+
+def test_scan_records_the_candidate_count(scan_env, monkeypatch):
+    monkeypatch.setattr(
+        main, "screen", lambda t: [candidate("A.NS"), candidate("B.NS")]
+    )
+    monkeypatch.setattr(main, "analyze_ticker", lambda **k: state(executed=False))
+
+    main.run_scan()
+
+    assert runs(scan_env)[0].candidates_found == 2
+
+
+def test_circuit_breaker_still_records_a_run(scan_env, monkeypatch):
+    """An early return is still a run — finally fires on the way out."""
+    monkeypatch.setattr(main, "screen", lambda t: [candidate("A.NS")])
+    monkeypatch.setattr(main.simulator, "is_circuit_breaker_active", lambda: True)
+
+    main.run_scan()
+
+    rows = runs(scan_env)
+    assert len(rows) == 1
+    assert rows[0].candidates_found == 1  # found them, just didn't act on them
+
+
+def test_scan_records_the_error_when_it_crashes(scan_env, monkeypatch):
+    """A crashed scan must leave a trace, not just vanish."""
+
+    def boom(tickers):
+        raise RuntimeError("universe fetch died")
+
+    monkeypatch.setattr(main, "screen", boom)
+
+    with pytest.raises(RuntimeError):
+        main.run_scan()
+
+    rows = runs(scan_env)
+    assert len(rows) == 1
+    assert "universe fetch died" in rows[0].error
+
+
+def test_a_broken_heartbeat_write_does_not_mask_the_real_error(monkeypatch):
+    """An exception raised inside finally replaces the one on its way out.
+
+    If the database is down, the useful error is whatever actually failed —
+    not the follow-on failure to record that it failed.
+    """
+
+    @contextmanager
+    def dead_db():
+        raise RuntimeError("database unreachable")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(main, "get_db", dead_db)
+    monkeypatch.setattr(main, "fetch_universe", lambda: ["A.NS"])
+    monkeypatch.setattr(
+        main, "screen", lambda t: (_ for _ in ()).throw(ValueError("the real problem"))
+    )
+
+    with pytest.raises(ValueError, match="the real problem"):
+        main.run_scan()
+
+
+def test_the_heartbeat_is_reported_in_memory_too(scan_env, monkeypatch):
+    """/health reads the cached value rather than querying, so the scan must
+    push it — otherwise health stays stale until the process restarts."""
+    monkeypatch.setattr(main, "screen", lambda t: [])
+
+    main.run_scan()
+
+    assert health._last_scan is not None
+    assert health._loaded is True

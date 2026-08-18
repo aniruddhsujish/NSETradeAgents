@@ -3,7 +3,7 @@ import asyncio
 import json
 from fastapi import FastAPI, Request
 
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import desc, func
 from contextlib import asynccontextmanager
@@ -11,7 +11,8 @@ from contextlib import asynccontextmanager
 from app.core.logging import setup_logging, log_buffer
 
 from app.core.database import get_db, init_db
-from app.models.models import Trade, PortfolioSnapshot, DecisionRecord
+from app.core.health import MAX_SCAN_AGE_HOURS, last_scan_at
+from app.models.models import Trade, PortfolioSnapshot, DecisionRecord, utcnow
 from app.scheduler.scheduler import create_scheduler
 
 setup_logging()
@@ -314,3 +315,27 @@ def api_snapshots():
             }
             for s in snapshots
         ]
+
+
+@app.get("/health")
+def health():
+    """Liveness for an external monitor, as JSON plus a meaningful status code.
+
+    Returns 503 once the scan has gone stale rather than 200 with a flag, so a
+    plain uptime monitor catches a stopped scheduler as well as a dead host.
+    """
+    last = last_scan_at()
+
+    if last is None:
+        return JSONResponse(status_code=503, content={"status": "never_ran"})
+
+    age = (utcnow() - last).total_seconds() / 3600
+    ok = age < MAX_SCAN_AGE_HOURS
+    return JSONResponse(
+        status_code=200 if ok else 503,
+        content={
+            "status": "ok" if ok else "stale",
+            "last_scan": last.isoformat(),
+            "age_hours": round(age, 1),
+        },
+    )
