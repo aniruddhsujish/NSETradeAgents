@@ -5,13 +5,13 @@ from fastapi import FastAPI, Request
 
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import desc
+from sqlalchemy import desc, func
 from contextlib import asynccontextmanager
 
 from app.core.logging import setup_logging, log_buffer
 
 from app.core.database import get_db, init_db
-from app.models.models import Trade, PortfolioSnapshot
+from app.models.models import Trade, PortfolioSnapshot, DecisionRecord
 from app.scheduler.scheduler import create_scheduler
 
 setup_logging()
@@ -69,7 +69,6 @@ def overview(request: Request):
 
 @app.get("/positions", response_class=HTMLResponse)
 def positions(request: Request):
-
     """Open positions with live prices and progress toward stop and target."""
     with get_db() as db:
         open_trades = (
@@ -110,7 +109,6 @@ def positions(request: Request):
 
 @app.get("/history", response_class=HTMLResponse)
 def history(request: Request):
-
     """Closed trades with win rate and profit statistics."""
     with get_db() as db:
         closed_trades = (
@@ -149,6 +147,120 @@ def history(request: Request):
 
     return templates.TemplateResponse(
         request=request, name="history.html", context={"trades": trades, "stats": stats}
+    )
+
+
+DECISIONS_PAGE_SIZE = 200
+
+
+@app.get("/decisions", response_class=HTMLResponse)
+def decisions(request: Request):
+    """Every candidate the scan evaluated, bought or not, with the veto's verdict.
+
+    This is the shadow-mode view: the veto records a verdict but never blocks,
+    so the summary compares what the killed set went on to do against what the
+    passed set did.
+    """
+    with get_db() as db:
+        rows = (
+            db.query(DecisionRecord)
+            .order_by(desc(DecisionRecord.as_of), desc(DecisionRecord.id))
+            .limit(DECISIONS_PAGE_SIZE)
+            .all()
+        )
+        records = [
+            {
+                "as_of": r.as_of,
+                "ticker": r.ticker,
+                "score": r.score,
+                "bands": [
+                    b
+                    for b in (
+                        r.entry_timing,
+                        r.momentum_quality,
+                        r.risk_reward_view,
+                        r.market_regime,
+                    )
+                    if b
+                ],
+                "entered": r.entered,
+                "block_reason": r.block_reason,
+                "veto_verdict": r.veto_verdict,
+                "veto_reason": r.veto_reason,
+                "veto_cited_fact": r.veto_cited_fact,
+                "veto_source_url": r.veto_source_url,
+                "veto_checked": r.veto_checked,
+                "veto_errored": (r.veto_checked or "").startswith("error:"),
+                "outcome_pnl_pct": r.outcome_pnl_pct,
+                "outcome_reason": r.outcome_reason,
+            }
+            for r in rows
+        ]
+
+        # Summary over every record ever, not just this page.
+        judged = db.query(DecisionRecord).filter(
+            DecisionRecord.veto_verdict.isnot(None)
+        )
+        seen = judged.count()
+        killed = judged.filter(DecisionRecord.veto_verdict == "KILL").count()
+        errored = judged.filter(DecisionRecord.veto_checked.like("error:%")).count()
+
+        reason_counts = (
+            db.query(DecisionRecord.veto_reason, func.count())
+            .filter(
+                DecisionRecord.veto_verdict == "KILL",
+                DecisionRecord.veto_reason.isnot(None),
+            )
+            .group_by(DecisionRecord.veto_reason)
+            .order_by(desc(func.count()))
+            .all()
+        )
+
+        def mean_outcome(verdict: str) -> float | None:
+            vals = [
+                v
+                for (v,) in db.query(DecisionRecord.outcome_pnl_pct)
+                .filter(
+                    DecisionRecord.veto_verdict == verdict,
+                    DecisionRecord.outcome_pnl_pct.isnot(None),
+                )
+                .all()
+            ]
+            return round(sum(vals) / len(vals), 2) if vals else None
+
+        killed_outcome = mean_outcome("KILL")
+        passed_outcome = mean_outcome("PASS")
+        total = db.query(DecisionRecord).count()
+
+    stats = {
+        "total": total,
+        "veto_seen": seen,
+        "veto_killed": killed,
+        "kill_rate": round(killed / seen * 100) if seen else 0,
+        "veto_errored": errored,
+        "killed_outcome": killed_outcome,
+        "passed_outcome": passed_outcome,
+        # The experiment, in one number: negative means the veto killed trades
+        # that went on to do worse than the ones it let through.
+        "edge": (
+            round(killed_outcome - passed_outcome, 2)
+            if killed_outcome is not None and passed_outcome is not None
+            else None
+        ),
+        "kill_reasons": (
+            [
+                {"reason": r, "count": n, "pct": round(n / killed * 100)}
+                for r, n in reason_counts
+            ]
+            if killed
+            else []
+        ),
+    }
+
+    return templates.TemplateResponse(
+        request=request,
+        name="decisions.html",
+        context={"records": records, "stats": stats, "limit": DECISIONS_PAGE_SIZE},
     )
 
 

@@ -111,6 +111,9 @@ def _build_agent():
         model=settings.llm_model_veto,
         max_tokens=8000,
         api_key=settings.anthropic_api_key,
+        # Caches the growing message history, not just the system prompt: each
+        # turn's accumulated tool results are read back at ~0.1x on the next.
+        model_kwargs={"cache_control": {"type": "ephemeral"}},
     )
     search = TavilySearch(
         max_results=4,

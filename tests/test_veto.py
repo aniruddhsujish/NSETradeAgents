@@ -206,6 +206,29 @@ def test_system_prompt_is_marked_for_caching():
     assert block["text"] == veto.SYSTEM_PROMPT
 
 
+def test_message_history_is_cached_too():
+    """Caching the system block alone covers ~900 tokens; the tool results that
+    pile up across the ReAct loop are where the cost actually is."""
+    with patch.object(veto, "ChatAnthropic") as fake_llm, patch.object(
+        veto, "TavilySearch"
+    ), patch.object(veto, "create_agent"):
+        veto._build_agent()
+
+    kwargs = fake_llm.call_args.kwargs
+    assert kwargs["model_kwargs"]["cache_control"] == {"type": "ephemeral"}
+
+
+def test_no_sampling_parameters_are_sent():
+    """Current models reject temperature/top_p/top_k with a 400."""
+    with patch.object(veto, "ChatAnthropic") as fake_llm, patch.object(
+        veto, "TavilySearch"
+    ), patch.object(veto, "create_agent"):
+        veto._build_agent()
+
+    kwargs = fake_llm.call_args.kwargs
+    assert not {"temperature", "top_p", "top_k"} & kwargs.keys()
+
+
 def test_prompt_names_every_kill_reason():
     """A reason the prompt never mentions can only ever be rejected in code."""
     for reason in KILL_REASONS:
