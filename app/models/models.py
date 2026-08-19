@@ -111,6 +111,9 @@ class DecisionRecord(Base):
     veto_cited_fact: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     veto_source_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     veto_checked: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    veto_transcript: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    veto_model: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    veto_mode: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
 
     # outcome — empty until the post-mortem fills it
     outcome_pnl_pct: Mapped[Optional[float]] = mapped_column(nullable=True)

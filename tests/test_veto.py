@@ -10,8 +10,11 @@ from unittest.mock import patch
 
 import pytest
 
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
 from app.agents import veto
 from app.agents.veto import KILL_REASONS, VetoVerdict, run_veto
+from app.core.config import settings
 
 TODAY = date(2026, 8, 16)
 
@@ -19,15 +22,16 @@ TODAY = date(2026, 8, 16)
 class StubAgent:
     """Returns a canned verdict and records what it was asked."""
 
-    def __init__(self, verdict: VetoVerdict):
+    def __init__(self, verdict: VetoVerdict, messages: list | None = None):
         self._verdict = verdict
+        self._messages = messages or []
         self.payload = None
         self.config = None
 
     def invoke(self, payload, config=None):
         self.payload = payload
         self.config = config
-        return {"structured_response": self._verdict}
+        return {"structured_response": self._verdict, "messages": self._messages}
 
 
 class ExplodingAgent:
@@ -74,6 +78,8 @@ def reset_agent_singleton():
 
 
 def test_kill_passes_every_field_through():
+    """Exact equality on purpose: a key added or dropped here changes what the
+    decision record stores, and main.py reads this dict by name."""
     r = call(StubAgent(verdict()))
     assert r == {
         "verdict": "KILL",
@@ -81,6 +87,8 @@ def test_kill_passes_every_field_through():
         "cited_fact": "Promoters sold 1.77% on 14 Aug 2026",
         "source_url": "https://example.com/bulk-deals",
         "checked": "results date, promoter deals, SEBI, QIP, pending events",
+        "transcript": "",
+        "model": settings.llm_model_veto,
     }
 
 
@@ -233,3 +241,92 @@ def test_prompt_names_every_kill_reason():
     """A reason the prompt never mentions can only ever be rejected in code."""
     for reason in KILL_REASONS:
         assert reason in veto.SYSTEM_PROMPT
+
+
+# ── the transcript ───────────────────────────────────────────────────────────
+#
+# Kept so the planned post-mortem analyst can show the agent its own prior
+# reasoning next to the outcome. `checked` is the agent's one-line self-report
+# of its diligence, which is the least trustworthy field when diagnosing a miss.
+
+
+def investigation() -> list:
+    """A realistic one-search exchange."""
+    return [
+        HumanMessage(content="Candidate: Menon Bearings (MENONBE), Auto Components"),
+        AIMessage(
+            content=[
+                {"type": "thinking", "thinking": "Check the results calendar first."},
+                {
+                    "type": "tool_use",
+                    "id": "t1",
+                    "name": "tavily_search",
+                    "input": {"query": "Menon Bearings Q1 results date"},
+                },
+            ]
+        ),
+        ToolMessage(content="Results were declared on 12 Aug 2026.", tool_call_id="t1"),
+        AIMessage(content="Results are already out. No disqualifying fact."),
+    ]
+
+
+def test_transcript_captures_the_searches_and_the_reasoning():
+    r = call(StubAgent(verdict(verdict="PASS"), investigation()))
+    t = r["transcript"]
+
+    assert "Menon Bearings Q1 results date" in t  # the query it actually ran
+    assert "Check the results calendar first" in t  # why it ran it
+    assert "Results were declared on 12 Aug 2026" in t  # what came back
+    assert "No disqualifying fact" in t  # what it concluded
+
+
+def test_transcript_distinguishes_searching_from_not_searching():
+    """The whole point: a PASS that checked the calendar and a PASS that never
+    looked are the same verdict with the same `checked` line."""
+    searched = call(StubAgent(verdict(verdict="PASS"), investigation()))["transcript"]
+    never = call(StubAgent(verdict(verdict="PASS"), []))["transcript"]
+
+    assert "[search]" in searched
+    assert "[search]" not in never
+
+
+def test_long_tool_results_are_truncated():
+    """An unabridged search dump per query would dominate the row."""
+    messages = [ToolMessage(content="x" * 9000, tool_call_id="t1")]
+
+    t = call(StubAgent(verdict(), messages))["transcript"]
+
+    assert "x" * veto.MAX_TOOL_CHARS in t
+    assert len(t) < veto.MAX_TOOL_CHARS + 100
+
+
+def test_the_whole_transcript_is_capped():
+    """Bounds a runaway loop, so row size is set here rather than by the agent."""
+    messages = [
+        ToolMessage(content="y" * veto.MAX_TOOL_CHARS, tool_call_id=f"t{i}")
+        for i in range(50)
+    ]
+
+    t = call(StubAgent(verdict(), messages))["transcript"]
+
+    assert len(t) == veto.MAX_TRANSCRIPT_CHARS
+
+
+def test_transcript_is_none_when_the_agent_errors():
+    """invoke() never returned, so there are no messages to render."""
+    assert call(ExplodingAgent(RuntimeError("boom")))["transcript"] is None
+
+
+@pytest.mark.parametrize(
+    "agent",
+    [
+        StubAgent(verdict()),
+        StubAgent(verdict(verdict="PASS")),
+        ExplodingAgent(RuntimeError("boom")),
+    ],
+    ids=["kill", "pass", "error"],
+)
+def test_the_model_is_recorded_on_every_path(agent):
+    """Verdicts from different models are different populations. Without this
+    stamped on each row, switching models silently mixes them."""
+    assert call(agent)["model"] == settings.llm_model_veto

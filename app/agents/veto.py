@@ -1,3 +1,5 @@
+import json
+
 from datetime import date
 
 import structlog
@@ -25,6 +27,41 @@ KILL_REASONS = (
 # this is only a backstop.
 MAX_SEARCHES = 8
 RECURSION_LIMIT = MAX_SEARCHES * 2 + 4
+
+# Search results are bulky and mostly boilerplate; what the agent made of them
+# is the part worth keeping. The overall cap bounds a runaway loop.
+MAX_TOOL_CHARS = 1500
+MAX_TRANSCRIPT_CHARS = 20000
+
+
+def _render(messages: list) -> str:
+    """Flatten the agent's messages into readable text for later review."""
+    parts: list[str] = []
+
+    for m in messages:
+        kind = m.__class__.__name__
+
+        if kind == "HumanMessage":
+            parts.append(f"[prompt]\n{m.content}")
+
+        elif kind == "AIMessage":
+            if isinstance(m.content, str):
+                if m.content.strip():
+                    parts.append(f"[assistant]\n{m.content}")
+            else:
+                for block in m.content:
+                    btype = block.get("type")
+                    if btype == "thinking":
+                        parts.append(f"[thinking]\n{block.get('thinking', '')}")
+                    elif btype == "text":
+                        parts.append(f"[assistant]\n{block.get('text', '')}")
+                    elif btype == "tool_use":
+                        parts.append(f"[search] {json.dumps(block.get('input', {}))}")
+
+        elif kind == "ToolMessage":
+            parts.append(f"[results]\n{str(m.content)[:MAX_TOOL_CHARS]}")
+
+    return "\n\n".join(parts)[:MAX_TRANSCRIPT_CHARS]
 
 
 class VetoVerdict(BaseModel):
@@ -166,6 +203,8 @@ The screener picked this for a volume-backed move. Find the specific thing that 
         v: VetoVerdict = result["structured_response"]
         verdict = v.verdict.upper()
 
+        transcript = _render(result.get("messages") or [])
+
         if verdict != "KILL" or v.reason not in KILL_REASONS:
             return {
                 "verdict": "PASS",
@@ -173,6 +212,8 @@ The screener picked this for a volume-backed move. Find the specific thing that 
                 "cited_fact": None,
                 "source_url": None,
                 "checked": v.checked,
+                "transcript": transcript,
+                "model": settings.llm_model_veto,
             }
         logger.info("veto_kill", ticker=ticker, reason=v.reason, fact=v.cited_fact)
         return {
@@ -181,6 +222,8 @@ The screener picked this for a volume-backed move. Find the specific thing that 
             "cited_fact": v.cited_fact,
             "source_url": v.source_url,
             "checked": v.checked,
+            "transcript": transcript,
+            "model": settings.llm_model_veto,
         }
 
     except Exception as e:
@@ -191,4 +234,6 @@ The screener picked this for a volume-backed move. Find the specific thing that 
             "cited_fact": None,
             "source_url": None,
             "checked": f"error: {e}",
+            "transcript": None,
+            "model": settings.llm_model_veto,
         }

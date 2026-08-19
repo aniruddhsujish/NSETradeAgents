@@ -192,6 +192,9 @@ def decisions(request: Request):
                 "veto_source_url": r.veto_source_url,
                 "veto_checked": r.veto_checked,
                 "veto_errored": (r.veto_checked or "").startswith("error:"),
+                "veto_transcript": r.veto_transcript,
+                "veto_model": r.veto_model,
+                "veto_mode": r.veto_mode,
                 "outcome_pnl_pct": r.outcome_pnl_pct,
                 "outcome_reason": r.outcome_reason,
             }

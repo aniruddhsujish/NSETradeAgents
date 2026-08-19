@@ -146,8 +146,52 @@ def test_record_captures_bands_and_indicators(scan_env, monkeypatch):
     assert row.momentum_quality == "STRONG"
     assert row.rsi == 62.0
     assert row.atr_pct == 2.4
-    assert row.veto_verdict is None  # not wired up yet
+    assert row.veto_verdict is None  # this stubbed state never reached the veto
     assert row.outcome_pnl_pct is None  # post-mortem fills this later
+
+
+# ── the veto's provenance ────────────────────────────────────────────────────
+
+
+def test_the_verdict_and_its_provenance_are_recorded(scan_env, monkeypatch):
+    """Model and mode mark population boundaries — an Opus verdict in shadow
+    mode is not comparable with a Sonnet verdict in acting mode."""
+    s = state(executed=False)
+    s["veto_result"] = {
+        "verdict": "KILL",
+        "reason": "EARNINGS_IMMINENT",
+        "cited_fact": "Q2 results on 14 Aug",
+        "source_url": "https://example.com/calendar",
+        "checked": "results calendar",
+        "transcript": "[search] {\"query\": \"results date\"}",
+        "model": "claude-opus-5",
+    }
+    monkeypatch.setattr(main, "screen", lambda t: [candidate("A.NS")])
+    monkeypatch.setattr(main, "analyze_ticker", lambda **k: s)
+    monkeypatch.setattr(main.settings, "veto_mode", "shadow")
+
+    main.run_scan()
+
+    row = records(scan_env)[0]
+    assert row.veto_verdict == "KILL"
+    assert row.veto_reason == "EARNINGS_IMMINENT"
+    assert row.veto_transcript == '[search] {"query": "results date"}'
+    assert row.veto_model == "claude-opus-5"
+    assert row.veto_mode == "shadow"
+
+
+def test_the_mode_is_recorded_even_when_the_veto_never_ran(scan_env, monkeypatch):
+    """Why mode comes from settings, not the verdict: with VETO_MODE=off there
+    is no verdict to read it from, and those rows must not look like passes."""
+    monkeypatch.setattr(main, "screen", lambda t: [candidate("A.NS")])
+    monkeypatch.setattr(main, "analyze_ticker", lambda **k: state(executed=False))
+    monkeypatch.setattr(main.settings, "veto_mode", "off")
+
+    main.run_scan()
+
+    row = records(scan_env)[0]
+    assert row.veto_verdict is None
+    assert row.veto_mode == "off"
 
 
 # ── early exits ──────────────────────────────────────────────────────────────

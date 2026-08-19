@@ -221,6 +221,25 @@ content %}
               {{ r.block_reason }}
             </p>
           </div>
+          {% endif %} {% if r.veto_transcript %}
+          <details class="group" @click.stop>
+            <summary
+              class="cursor-pointer text-slate-500 text-xs uppercase tracking-widest hover:text-slate-300 select-none"
+            >
+              Full investigation
+              <span class="text-slate-700 group-open:hidden">— show</span>
+            </summary>
+            <pre
+              class="mt-2 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-black/40 p-3 text-[11px] leading-relaxed text-slate-400"
+            >
+{{- r.veto_transcript -}}</pre
+            >
+          </details>
+          {% endif %} {% if r.veto_model or r.veto_mode %}
+          <p class="text-slate-700 text-[11px] font-mono">
+            {{ r.veto_model }}{% if r.veto_mode %} · {{ r.veto_mode }} mode{% endif
+            %}
+          </p>
           {% endif %} {% if not r.veto_checked and not r.block_reason %}
           <p class="text-slate-600 text-xs">No further detail recorded.</p>
           {% endif %}

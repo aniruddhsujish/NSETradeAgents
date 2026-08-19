@@ -126,6 +126,9 @@ def run_scan():
                         veto_cited_fact=veto.get("cited_fact"),
                         veto_source_url=veto.get("source_url"),
                         veto_checked=veto.get("checked"),
+                        veto_transcript=veto.get("transcript"),
+                        veto_model=veto.get("model"),
+                        veto_mode=settings.veto_mode,
                     )
                 )
             if executed:
