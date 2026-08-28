@@ -1,5 +1,6 @@
 import structlog
 from app.core.config import settings
+from app.portfolio.exits import stop_pct, target_pct
 
 logger = structlog.get_logger()
 
@@ -82,15 +83,10 @@ def run_risk_check(
     actual_position_value = quantity * current_price
 
     # Stop loss and take profit
-    if atr_pct is not None and atr_pct > 0:
-        stop_pct = min(
-            max(2.5 * atr_pct / 100, 0.05), 0.10
-        )  # 2.5x ATR, bounded between 5% and 10%
-    else:
-        stop_pct = settings.stop_loss_pct
-    stop_loss = round(current_price * (1 - stop_pct), 2)
-    take_profit = round(current_price * (1 + settings.take_profit_pct), 2)
-    risk_reward = round(settings.take_profit_pct / stop_pct, 2)
+    pct = stop_pct(atr_pct)
+    stop_loss = round(current_price * (1 - pct), 2)
+    take_profit = round(current_price * (1 + target_pct(atr_pct)), 2)
+    risk_reward = round(target_pct(atr_pct) / pct, 2)
 
     notes = (
         f"Position: ₹{actual_position_value:.0f} ({actual_position_value/settings.starting_capital*100:.1f}% of portfolio) | "

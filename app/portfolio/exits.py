@@ -12,6 +12,7 @@ class Bar:
     `flat()`. Writing the exit rules against one shape keeps both paths
     identical.
     """
+
     open: float
     high: float
     low: float
@@ -35,6 +36,25 @@ class PositionView:
     target_price: float
     trail_stop: float = 0.0
     hybrid_active: bool = False
+
+
+def stop_pct(atr_pct: float | None) -> float:
+    """Stop distance as a fraction of entry price.
+
+    2.5x the stock's ATR, floored at 5% and capped at 10%. Falls back to the
+    flat default when ATR is missing or zero"""
+    if atr_pct is None or atr_pct <= 0:
+        return settings.stop_loss_pct
+    return min(max(2.5 * atr_pct / 100, 0.05), 0.10)
+
+
+def target_pct(atr_pct: float | None) -> float:
+    """Target distance as a fraction of entry price.
+
+    Takes atr_pct — currently unused — so the flat target can become
+    ATR-scaled by changing this function alone.
+    """
+    return settings.take_profit_pct
 
 
 def evaluate_exit(pos: PositionView, bar: Bar, today: date) -> tuple[float, str] | None:

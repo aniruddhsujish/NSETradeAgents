@@ -7,7 +7,14 @@ import structlog
 from app.backtest.store import BacktestStore
 from app.agents.technical import _compute_signal
 from app.core.config import settings
-from app.portfolio.exits import Bar, PositionView, evaluate_exit, update_trail
+from app.portfolio.exits import (
+    Bar,
+    PositionView,
+    evaluate_exit,
+    stop_pct,
+    target_pct,
+    update_trail,
+)
 from app.screener.filters import evaluate_candidate, regime_blocked
 from app.utils.indicators import compute_indicators
 from app.utils.scoring import compute_rules_confidence
@@ -18,6 +25,7 @@ logger = structlog.get_logger()
 @dataclass
 class Position:
     """An open position during a backtest run."""
+
     ticker: str
     entry_date: date
     entry_price: float
@@ -35,6 +43,7 @@ class Position:
 @dataclass
 class ClosedTrade:
     """A finished trade, as written to the trade log."""
+
     ticker: str
     entry_date: date
     exit_date: date
@@ -167,18 +176,15 @@ def run_backtest(
             cash -= capital_used
 
             atr_pct = p.get("atr_pct", 0.0)
-            if atr_pct > 0:
-                stop_pct = min(max(2.5 * atr_pct / 100, 0.05), 0.10)
-            else:
-                stop_pct = settings.stop_loss_pct
+            stop = stop_pct(atr_pct)
 
             open_positions.append(
                 Position(
                     ticker=p["ticker"],
                     entry_date=day,
                     entry_price=entry_price,
-                    stop_price=entry_price * (1 - stop_pct),
-                    target_price=entry_price * (1 + settings.take_profit_pct),
+                    stop_price=entry_price * (1 - stop),
+                    target_price=entry_price * (1 + target_pct(atr_pct)),
                     shares=shares,
                     capital_used=capital_used,
                     score=p["score"],
@@ -307,8 +313,9 @@ def run_backtest(
                     score = compute_rules_confidence(
                         {"signal": "BUY", "indicators": ind},
                         {
-                            "stop_loss": est * (1 - settings.stop_loss_pct),
-                            "take_profit": est * (1 + settings.take_profit_pct),
+                            "stop_loss": est * (1 - stop_pct(ind.get("atr_pct", 0.0))),
+                            "take_profit": est
+                            * (1 + target_pct(ind.get("atr_pct", 0.0))),
                         },
                         mkt_ctx,
                     )["score"]

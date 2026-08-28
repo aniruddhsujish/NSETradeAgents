@@ -1,9 +1,17 @@
 import pytest
 from datetime import date
 
-from app.portfolio.exits import Bar, PositionView, evaluate_exit
+from app.portfolio.exits import (
+    Bar,
+    PositionView,
+    evaluate_exit,
+    stop_pct,
+    target_pct,
+)
 
 MAX_HOLD_DAYS = 21
+FLAT_STOP_PCT = 0.07
+FLAT_TARGET_PCT = 0.18
 
 ENTRY = date(2024, 1, 1)
 # Entered at 100: stop 93, target 118
@@ -16,7 +24,10 @@ BASE = PositionView(
 
 @pytest.fixture(autouse=True)
 def patch_exit_settings(monkeypatch):
+    """Pin thresholds so these tests don't depend on the local .env."""
     monkeypatch.setattr("app.portfolio.exits.settings.max_hold_days", MAX_HOLD_DAYS)
+    monkeypatch.setattr("app.portfolio.exits.settings.stop_loss_pct", FLAT_STOP_PCT)
+    monkeypatch.setattr("app.portfolio.exits.settings.take_profit_pct", FLAT_TARGET_PCT)
 
 
 def day(n: int) -> date:
@@ -168,3 +179,60 @@ def test_flat_bar_hits_target():
     price, reason = evaluate_exit(BASE, Bar.flat(120.0), day(5))
     assert reason == "target"
     assert price == 120.0
+
+
+# ── stop and target distances ─────────────────────────────────────────────────
+#
+# Shared by the live risk agent and the backtest engine, which each used to
+# carry their own copy of this arithmetic.
+
+
+@pytest.mark.parametrize(
+    "atr_pct,expected",
+    [
+        (0.5, 0.05),    # floor
+        (1.5, 0.05),    # floor — the screener's minimum ATR
+        (2.0, 0.05),    # floor, exactly where it stops binding
+        (2.4, 0.06),
+        (3.0, 0.075),
+        (4.0, 0.10),    # cap, exactly where it starts binding
+        (6.0, 0.10),    # cap
+    ],
+)
+def test_stop_distance_is_2_5x_atr_bounded_5_to_10(atr_pct, expected):
+    assert stop_pct(atr_pct) == pytest.approx(expected)
+
+
+def test_the_bounds_bind_below_2_and_above_4_percent_atr():
+    """Worth pinning: these are the points where risk/reward stops varying
+    with volatility, which is what makes an ATR-scaled target a live question."""
+    assert stop_pct(1.99) == 0.05
+    assert stop_pct(2.01) > 0.05
+    assert stop_pct(3.99) < 0.10
+    assert stop_pct(4.01) == 0.10
+
+
+@pytest.mark.parametrize("missing", [None, 0.0, -1.0])
+def test_missing_atr_falls_back_to_the_flat_stop(missing):
+    """The two call sites guarded this differently — the engine would have
+    raised on None — so the fallback lives in one place now."""
+    assert stop_pct(missing) == FLAT_STOP_PCT
+
+
+def test_target_is_flat_today_and_ignores_atr():
+    """target_pct takes atr_pct only as the seam for an ATR-scaled target.
+    When this test starts failing, that change has landed."""
+    assert target_pct(2.0) == FLAT_TARGET_PCT
+    assert target_pct(6.0) == FLAT_TARGET_PCT
+    assert target_pct(None) == FLAT_TARGET_PCT
+
+
+def test_reward_to_risk_currently_varies_with_volatility():
+    """Today a calm stock is graded far better than a jumpy one. An ATR-scaled
+    target collapses this to a constant, which is why the scoring dimension
+    has to be dealt with in the same change."""
+    calm = target_pct(2.0) / stop_pct(2.0)
+    jumpy = target_pct(4.0) / stop_pct(4.0)
+
+    assert calm == pytest.approx(3.6)
+    assert jumpy == pytest.approx(1.8)
