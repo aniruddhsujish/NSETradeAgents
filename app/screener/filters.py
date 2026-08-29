@@ -1,3 +1,5 @@
+from datetime import date
+
 import pandas as pd
 import structlog
 from app.utils.indicators import compute_indicators
@@ -56,22 +58,35 @@ def evaluate_candidate(ind: dict) -> tuple[dict | None, str]:
     }, "passed"
 
 
-def regime_blocked(index_close: pd.Series | None) -> bool:
-    """True when the index is below its regime moving average, meaning no new
-    entries today.
+def breadth_pct(closes: pd.DataFrame | None) -> float | None:
+    """Percentage of the universe trading above its own 50-day average.
 
-    Fails open: missing, short or malformed data never blocks trading, since
-    a silently halted bot looks exactly like a quiet market.
+    Only tickers with usable data are counted — a missing series compares as
+    False and would otherwise be counted as a downtrend, dragging breadth down
+    early in a run. Returns None when it cannot be computed, so callers can
+    fail open.
     """
-    if index_close is None:
-        return False
+    if closes is None or closes.empty or len(closes) < settings.regime_sma_period:
+        return None
     try:
-        if len(index_close) < settings.regime_sma_period:
-            return False
-        sma = float(index_close.tail(settings.regime_sma_period).mean())
-        return float(index_close.iloc[-1]) < sma
+        last = closes.iloc[-1]
+        sma = closes.tail(settings.regime_sma_period).mean()
+        valid = last.notna() & sma.notna()
+        if not valid.any():
+            return None
+        return float((last[valid] > sma[valid]).mean() * 100)
     except Exception:
-        return False
+        return None
+
+
+def regime_blocked_by_breadth(closes: pd.DataFrame | None) -> bool:
+    """True when most of the universe sits below its own moving average.
+
+    Fails open like the index gate: a silently halted bot looks exactly like a
+    quiet market.
+    """
+    b = breadth_pct(closes)
+    return False if b is None else b < settings.breadth_floor_pct
 
 
 def screen(tickers: list[str]) -> list[dict]:
@@ -81,17 +96,6 @@ def screen(tickers: list[str]) -> list[dict]:
     each. Returns survivors sorted best-first by ranking score, or an empty
     list if the regime gate is closed.
     """
-    try:
-        _nifty = safe_yf_download("^NSEI", period="60d")
-        if not _nifty.empty and regime_blocked(_nifty["Close"].squeeze()):
-            logger.info(
-                "screener_regime_blocked",
-                reason="Nifty50 below 50d SMA - skipping new entries",
-            )
-            return []
-    except Exception as e:
-        logger.warning("regime_check_failed", error=str(e))
-
     logger.info("screener_start", total=len(tickers))
 
     if not tickers:
@@ -100,6 +104,22 @@ def screen(tickers: list[str]) -> list[dict]:
 
     # Download all tickers in one batch
     raw = safe_yf_download(tickers, period="12mo", group_by="ticker")
+
+    # The regime gate runs after the download because breadth is measured on
+    # the universe itself, which this batch already contains.
+    try:
+        try:
+            closes = raw.xs("Close", axis=1, level=1)
+        except Exception:
+            closes = None
+        if regime_blocked_by_breadth(closes):
+            logger.info(
+                "screener_regime_blocked",
+                reason="under half the universe above its 50d SMA",
+            )
+            return []
+    except Exception as e:
+        logger.warning("regime_check_failed", error=str(e))
 
     candidates = []
     counts = {
@@ -113,6 +133,7 @@ def screen(tickers: list[str]) -> list[dict]:
         "rsi": 0,
         "passed": 0,
         "momentum": 0,
+        "stale": 0,
     }
 
     for ticker in tickers:
@@ -126,6 +147,15 @@ def screen(tickers: list[str]) -> list[dict]:
 
             if len(df) < 25:
                 counts["no_data"] += 1
+                continue
+
+            # The scan runs late in the session and screens today's partial
+            # bar deliberately. If the feed has not published it yet, the last
+            # bar is yesterday's — we would screen yesterday's completed data
+            # while buying at today's price, silently reverting to the old
+            # entry model with no error.
+            if df.index[-1].date() != date.today():
+                counts["stale"] += 1
                 continue
 
             ind = compute_indicators(df)
@@ -146,4 +176,15 @@ def screen(tickers: list[str]) -> list[dict]:
 
     candidates.sort(key=lambda x: x["score"], reverse=True)
     logger.info("screener_done", **counts)
+
+    # One stale ticker is a quiet listing; most of the universe stale means the
+    # feed has not published today yet and this scan saw almost nothing.
+    if tickers and counts["stale"] > len(tickers) / 2:
+        logger.error(
+            "screener_feed_stale",
+            stale=counts["stale"],
+            total=len(tickers),
+            reason="today's bar missing for most of the universe",
+        )
+
     return candidates

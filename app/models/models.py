@@ -31,7 +31,6 @@ class Trade(Base):
     atr_pct: Mapped[Optional[float]] = mapped_column(nullable=True)
     peak_price: Mapped[Optional[float]] = mapped_column(nullable=True)
     trail_stop: Mapped[Optional[float]] = mapped_column(nullable=True)
-    hybrid_active: Mapped[Optional[bool]] = mapped_column(nullable=True, default=False)
     status: Mapped[str] = mapped_column(String(10), default="open")  # open | closed
     close_price: Mapped[Optional[float]]
     close_reason: Mapped[Optional[str]] = mapped_column(

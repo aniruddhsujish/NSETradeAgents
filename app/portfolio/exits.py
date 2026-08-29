@@ -35,7 +35,6 @@ class PositionView:
     stop_price: float
     target_price: float
     trail_stop: float = 0.0
-    hybrid_active: bool = False
 
 
 def stop_pct(atr_pct: float | None) -> float:
@@ -45,16 +44,36 @@ def stop_pct(atr_pct: float | None) -> float:
     flat default when ATR is missing or zero"""
     if atr_pct is None or atr_pct <= 0:
         return settings.stop_loss_pct
-    return min(max(2.5 * atr_pct / 100, 0.05), 0.10)
+    return min(max(settings.stop_atr_mult * atr_pct / 100, 0.05), 0.10)
 
 
 def target_pct(atr_pct: float | None) -> float:
     """Target distance as a fraction of entry price.
 
-    Takes atr_pct — currently unused — so the flat target can become
-    ATR-scaled by changing this function alone.
+    Scaled to the stock's own volatility so the target sits inside the range a
+    21-day hold actually covers, rather than outside it. Falls back to the flat
+    target when the ladder is off or ATR is unknown.
     """
-    return settings.take_profit_pct
+    if atr_pct is None or atr_pct <= 0:
+        return settings.take_profit_pct
+    return min(
+        max(settings.target_atr_mult * atr_pct / 100, settings.target_min_pct),
+        settings.target_max_pct,
+    )
+
+
+def trail_arm_pct(atr_pct: float | None) -> float:
+    """Gain required before the trailing stop arms.
+
+    Must stay below target_pct: a flat 12% arming point against an ATR-scaled
+    target sits above the target on most stocks, so the trail would never arm.
+    """
+    if atr_pct is None or atr_pct <= 0:
+        return settings.trail_activation_pct
+    return min(
+        max(settings.trail_arm_atr_mult * atr_pct / 100, settings.trail_arm_min_pct),
+        settings.trail_arm_max_pct,
+    )
 
 
 def evaluate_exit(pos: PositionView, bar: Bar, today: date) -> tuple[float, str] | None:
@@ -66,7 +85,7 @@ def evaluate_exit(pos: PositionView, bar: Bar, today: date) -> tuple[float, str]
 
     effective_stop = pos.trail_stop if pos.trail_stop > 0 else pos.stop_price
     stop_hit = bar.low <= effective_stop
-    target_hit = (not pos.hybrid_active) and bar.high >= pos.target_price
+    target_hit = bar.high >= pos.target_price
     days_held = (today - pos.entry_date).days
 
     # On a daily bar we cannot know whether the low or the high came first,
@@ -77,7 +96,7 @@ def evaluate_exit(pos: PositionView, bar: Bar, today: date) -> tuple[float, str]
         return min(bar.open, effective_stop), "trail" if pos.trail_stop > 0 else "stop"
     if target_hit:
         return max(bar.open, pos.target_price), "target"
-    if (not pos.hybrid_active) and days_held >= settings.max_hold_days:
+    if days_held >= settings.max_hold_days:
         return bar.close, "timeout"
     return None  # hold
 
@@ -101,7 +120,7 @@ def update_trail(
     above the activation threshold today.
     """
     peak = max(peak_price, close)
-    active = close >= entry_price * (1 + settings.trail_activation_pct)
+    active = close >= entry_price * (1 + trail_arm_pct(atr_pct))
     if not active:
         return peak, trail_stop, False
     trail_pct = (

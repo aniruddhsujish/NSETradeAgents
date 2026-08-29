@@ -120,7 +120,6 @@ def review_positions() -> None:
                 stop_price=position["stop_loss"],
                 target_price=position["take_profit"],
                 trail_stop=position.get("trail_stop") or 0.0,
-                hybrid_active=position.get("hybrid_active", False),
             ),
             Bar.flat(current_price),
             datetime.now(IST).date(),
@@ -142,8 +141,7 @@ def review_positions() -> None:
 def review_trail_eod() -> None:
     """Advance trailing stops on the day's closing prices.
 
-    Also promotes newly eligible positions to hybrid mode, up to the cap, and
-    closes any position whose close has fallen through its trail.
+    Closes any position whose close has fallen through its trail.
     """
     portfolio = simulator.get_portfolio_state()
     positions = portfolio["positions"]
@@ -165,8 +163,6 @@ def review_trail_eod() -> None:
         logger.warning("trail_eod_no_data")
         return
 
-    hybrid_active_count = sum(1 for p in positions if p.get("hybrid_active", False))
-
     for position in positions:
         ticker = position["ticker"]
         try:
@@ -186,7 +182,6 @@ def review_trail_eod() -> None:
         entry_price = position["entry_price"]
         peak_price = position.get("peak_price") or 0
         trail_stop_val = position.get("trail_stop") or 0
-        hybrid_active = position.get("hybrid_active", False)
         atr_pct = position.get("atr_pct") or 0
 
         new_peak, new_trail_stop, active = update_trail(
@@ -204,20 +199,13 @@ def review_trail_eod() -> None:
             continue
 
         if not is_already_trail:
-            should_be_hybrid = hybrid_active_count < settings.max_hybrid_positions
-            if should_be_hybrid:
-                hybrid_active_count += 1
-                hybrid_active = True
-            simulator.update_trail(
-                ticker, new_peak, new_trail_stop, hybrid_active=should_be_hybrid
-            )
+            simulator.update_trail(ticker, new_peak, new_trail_stop)
             logger.info(
                 "trail_activated",
                 ticker=ticker,
                 close=close_price,
                 peak=new_peak,
                 trail_stop=new_trail_stop,
-                hybrid=should_be_hybrid,
             )
         elif new_peak != peak_price or new_trail_stop != trail_stop_val:
             simulator.update_trail(ticker, new_peak, new_trail_stop)
@@ -238,22 +226,29 @@ def review_trail_eod() -> None:
                 trail_stop=new_trail_stop,
             )
             simulator.close_trade(ticker, close_price, reason="trail")
-            if hybrid_active:
-                hybrid_active_count -= 1
 
 
 def create_scheduler() -> BackgroundScheduler:
-    """Build the job schedule: morning scan, intraday position checks, the
-    end-of-day trail update, and the post-mortem.
+    """Build the job schedule: the afternoon scan, intraday position checks,
+    the end-of-day trail update, and the post-mortem.
+
+    The scan runs late in the session rather than at the open because the
+    signal is a claim about today's action — the setup is evaluated and bought
+    on the same day. Buying at the next open instead forfeits the night after
+    the signal, which is worth 1.5x a typical held night.
     """
     from main import run_scan
 
     sched = BackgroundScheduler(timezone=IST)
 
+    # 15:00, not later: the scan downloads 400 tickers and then runs the
+    # LangGraph pipeline — including a veto call — per candidate, so it needs
+    # roughly ten minutes. Orders have to be in before the 15:30 close, and a
+    # missed close is a missed trade rather than a late one.
     sched.add_job(
         run_scan,
-        CronTrigger(day_of_week="mon-fri", hour=9, minute=30, timezone=IST),
-        name="morning_scan",
+        CronTrigger(day_of_week="mon-fri", hour=15, minute=0, timezone=IST),
+        name="afternoon_scan",
     )
 
     sched.add_job(review_positions, IntervalTrigger(minutes=15), name="position_review")

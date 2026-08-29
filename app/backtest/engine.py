@@ -15,7 +15,7 @@ from app.portfolio.exits import (
     target_pct,
     update_trail,
 )
-from app.screener.filters import evaluate_candidate, regime_blocked
+from app.screener.filters import evaluate_candidate
 from app.utils.indicators import compute_indicators
 from app.utils.scoring import compute_rules_confidence
 
@@ -37,7 +37,6 @@ class Position:
     atr_pct: float = 0.0
     peak_price: float = 0.0
     trail_stop: float = 0.0
-    hybrid_active: bool = False
 
 
 @dataclass
@@ -67,7 +66,6 @@ def _check_exit(pos: Position, bar: pd.Series, today: date) -> tuple[float, str]
             stop_price=pos.stop_price,
             target_price=pos.target_price,
             trail_stop=pos.trail_stop,
-            hybrid_active=pos.hybrid_active,
         ),
         Bar(
             open=float(bar["Open"]),
@@ -114,18 +112,56 @@ def _market_context(nifty: pd.DataFrame, vix: pd.DataFrame, ts: pd.Timestamp) ->
     }
 
 
+def _open_position(
+    p: dict, price: float, day: date, cash: float
+) -> tuple[Position | None, float]:
+    """Build a position at a given fill price, and return the cash left.
+
+    Shared by both entry models so the sizing and level arithmetic cannot
+    drift between them.
+    """
+    if price <= 0:
+        return None, cash
+    budget = min(cash, settings.starting_capital * settings.max_position_pct)
+    shares = int(budget / price)
+    if shares <= 0:
+        return None, cash
+
+    capital_used = shares * price
+    atr_pct = p.get("atr_pct", 0.0)
+    stop = stop_pct(atr_pct)
+
+    return (
+        Position(
+            ticker=p["ticker"],
+            entry_date=day,
+            entry_price=price,
+            stop_price=price * (1 - stop),
+            target_price=price * (1 + target_pct(atr_pct)),
+            shares=shares,
+            capital_used=capital_used,
+            score=p["score"],
+            atr_pct=atr_pct,
+            peak_price=price,
+        ),
+        cash - capital_used,
+    )
+
+
 def run_backtest(
     db_path: str = "backtest_data.db",
     start: date = date(2022, 1, 1),
     end: date = date(2025, 12, 31),
-    hybrid_mode: bool = True,
 ) -> tuple[list[ClosedTrade], list[tuple[date, float]], list[int]]:
     """Replay the strategy day by day over historical bars.
 
-    Each day, in order: fill yesterday's signals at today's open, check exits
-    against today's bar, update trailing stops on the close, then score new
-    candidates for tomorrow. Signals are always acted on the following day, so
-    no decision uses a price it could not have known.
+    Each day, in order: check exits against today's bar, update trailing stops
+    on the close, then score new candidates.
+
+    A signal is filled at the close of the same bar it came from, so the fill
+    uses a price that was not knowable at decision time. Live closes that gap by
+    scanning at 15:00 and buying before 15:30, when the filters are ~92%
+    resolved — the backtest is optimistic by the difference.
 
     Returns (closed_trades, equity_curve, all_candidate_scores).
     """
@@ -141,60 +177,32 @@ def run_backtest(
 
     nifty = all_bars.get("^NSEI", pd.DataFrame())
     vix = all_bars.get("^INDIAVIX", pd.DataFrame())
-    nifty_close = nifty["Close"] if not nifty.empty else None
     universe = sorted(t for t in all_bars if not t.startswith("^"))
 
     logger.info("backtest_init", trading_days=len(trading_days), universe=len(universe))
+
+    # Breadth, precomputed once: recomputing 50-day means across the whole
+    # universe on every trading day would dominate the run. Only tickers with
+    # data on a given day count toward that day's percentage.
+    _closes = pd.DataFrame({t: all_bars[t]["Close"] for t in universe})
+    _sma = _closes.rolling(settings.regime_sma_period).mean()
+    _valid = _closes.notna() & _sma.notna()
+    breadth = (
+        ((_closes > _sma) & _valid).sum(axis=1)
+        / _valid.sum(axis=1).replace(0, pd.NA)
+        * 100
+    )
 
     cash: float = settings.starting_capital
     open_positions: list[Position] = []
     closed_trades: list[ClosedTrade] = []
     equity_curve: list[tuple[date, float]] = []
-    pending_entries: list[dict] = []
     all_scores: list[int] = []
 
     for idx, day in enumerate(trading_days):
         ts = pd.Timestamp(day)
 
-        # 1. Execute yesterday's signals at today's open
-        for p in pending_entries:
-            if len(open_positions) >= settings.max_positions:
-                break
-            bars = all_bars.get(p["ticker"])
-            if bars is None or ts not in bars.index:
-                continue
-            entry_price = float(bars.at[ts, "Open"])
-            if entry_price <= 0:
-                continue
-            position_budget = min(
-                cash, settings.starting_capital * settings.max_position_pct
-            )
-            shares = int(position_budget / entry_price)
-            if shares <= 0:
-                continue
-            capital_used = shares * entry_price
-            cash -= capital_used
-
-            atr_pct = p.get("atr_pct", 0.0)
-            stop = stop_pct(atr_pct)
-
-            open_positions.append(
-                Position(
-                    ticker=p["ticker"],
-                    entry_date=day,
-                    entry_price=entry_price,
-                    stop_price=entry_price * (1 - stop),
-                    target_price=entry_price * (1 + target_pct(atr_pct)),
-                    shares=shares,
-                    capital_used=capital_used,
-                    score=p["score"],
-                    atr_pct=atr_pct,
-                    peak_price=entry_price,
-                )
-            )
-        pending_entries = []
-
-        # 2. Check exits on today's bar (using EOD trail stop from yesterday)
+        # 1. Check exits on today's bar (using EOD trail stop from yesterday)
         for pos in list(open_positions):
             bars = all_bars.get(pos.ticker)
             if bars is None or ts not in bars.index:
@@ -222,9 +230,8 @@ def run_backtest(
             )
             open_positions.remove(pos)
 
-        # 2.5. EOD trailing stop update
+        # 2. EOD trailing stop update
         eod_exits: list[tuple[Position, float]] = []
-        hybrid_count = sum(1 for p in open_positions if p.hybrid_active)
         for pos in open_positions:
             bars = all_bars.get(pos.ticker)
             if bars is None or ts not in bars.index:
@@ -244,15 +251,6 @@ def run_backtest(
             if not active and not was_trailing:
                 continue
             pos.trail_stop = new_trail
-
-            if (
-                active
-                and hybrid_mode
-                and not pos.hybrid_active
-                and hybrid_count < settings.max_hybrid_positions
-            ):
-                pos.hybrid_active = True
-                hybrid_count += 1
 
             if close_p <= pos.trail_stop:
                 eod_exits.append((pos, close_p))
@@ -279,10 +277,11 @@ def run_backtest(
             )
             open_positions.remove(pos)
 
-        # 3. Generate new signals from today's close
+        # 3. Generate new signals from today's close and fill them there
         capacity = settings.max_positions - len(open_positions)
-        asof_close = nifty_close.loc[:ts] if nifty_close is not None else None
-        if capacity > 0 and not regime_blocked(asof_close):
+        b = breadth.get(ts)
+        gate_open = b is None or pd.isna(b) or b >= settings.breadth_floor_pct
+        if capacity > 0 and gate_open:
             held = {p.ticker for p in open_positions}
             mkt_ctx = _market_context(nifty, vix, ts)
             signal_candidates: list[dict] = []
@@ -335,7 +334,19 @@ def run_backtest(
                     )
 
             signal_candidates.sort(key=lambda x: x["screener_score"], reverse=True)
-            pending_entries = signal_candidates[:capacity]
+            selected = signal_candidates[:capacity]
+
+            # Filled on the same bar the signal came from. Runs after exits,
+            # so a position opened here cannot exit the same day.
+            for p in selected:
+                if len(open_positions) >= settings.max_positions:
+                    break
+                bars = all_bars.get(p["ticker"])
+                if bars is None or ts not in bars.index:
+                    continue
+                pos, cash = _open_position(p, float(bars.at[ts, "Close"]), day, cash)
+                if pos:
+                    open_positions.append(pos)
 
         # 4. Daily equity snapshot
         equity = cash

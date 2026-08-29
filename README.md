@@ -18,7 +18,7 @@ without being allowed to block anything. The reasoning behind that split is in
 ```
 400 NSE stocks (Smallcap 250 + Midcap 150)
         ↓
-Regime gate ────────────► skip the day entirely if Nifty 50 is below its 50-day average
+Breadth gate ───────────► skip the day if under half the universe is above its own 50-day average
         ↓
 Screener (10 filters) ──► rank what survives by volume, momentum, and volatility
         ↓
@@ -29,7 +29,7 @@ For each candidate, run the LangGraph pipeline:
         ↓
 Score 0–100. Buy at 65 or above. The veto records a verdict but does not block.
         ↓
-Portfolio simulator — cash, positions, stops, P&L
+Buy before the 15:30 close — the signal is a claim about today
         ↓
 Decision record written for every candidate, bought or not
 ```
@@ -40,7 +40,7 @@ Every stage can reject a candidate. Most do.
 
 | When (IST) | Job |
 |---|---|
-| 09:30 | Morning scan — screen, score, and open new positions |
+| 15:00 | Scan — screen, score, and open new positions before the 15:30 close |
 | every 15 min | Check open positions against stop and target (market hours only) |
 | 15:35 | Update trailing stops from the day's close |
 | 16:00 | Post-mortem — fill in what past decisions actually returned |
@@ -53,8 +53,11 @@ Every stage can reject a candidate. Most do.
 Nifty Smallcap 250 + Midcap 150, fetched from NSE's published index lists.
 
 ### Regime gate
-If Nifty 50 closes below its 50-day average, no new positions that day. Existing
-positions are unaffected.
+If fewer than 50% of the universe are trading above their own 50-day average, no
+new positions that day. Existing positions are unaffected.
+
+Breadth rather than an index, because the index is not what gets traded: Nifty 50
+rose 9.2% in 2025 while the median mid/smallcap fell 5.3%.
 
 ### Screener — 10 filters, all must pass
 
@@ -97,20 +100,26 @@ one band when entry timing is not ideal.
 `app/portfolio/exits.py` decides every exit, for both the live system and the
 backtest.
 
+Every level is scaled to the stock's own volatility, so a calm stock and a wild
+one are asked to do proportionally the same thing.
+
 | Exit | Trigger |
 |---|---|
-| Stop | ATR-based: `2.5 × ATR%`, floor 5%, cap 10% |
-| Trailing stop | Activates at +12%, trails `2 × ATR%` behind the peak (5–8%) |
-| Target | +18% above entry |
+| Stop | `2.5 × ATR%` below entry, floor 5%, cap 10% |
+| Trailing stop | Arms at `2 × ATR%` gain, then trails `2 × ATR%` behind the peak (5–8%) |
+| Target | `4 × ATR%` above entry, floor 6%, cap 20% |
 | Timeout | 21 days |
 
-Once a position gains 12%, up to three positions at a time switch to hybrid mode:
-target and timeout are removed, and the trailing stop becomes the only exit.
+The trail must arm below the target or it never arms at all. Once armed, the
+target stays live — whichever level the price reaches first ends the trade.
 
 **Circuit breaker:** if the portfolio falls more than 8% from its 30-day peak,
 new entries pause until it recovers.
 
 **Position limits:** 5 concurrent positions, one per ticker.
+
+**Entry timing:** the scan runs at 15:00 and buys before the close, so a setup is
+evaluated and bought on the same day.
 
 ---
 
@@ -169,23 +178,40 @@ Four years of NSE daily data, ₹2,00,000 starting capital, entry threshold 65.
 
 | Metric | Value |
 |---|---|
-| Total return | +82.6% |
-| CAGR | +16.3% |
-| Sharpe ratio | 1.38 |
-| Max drawdown | 12.9% |
-| Total trades | 235 |
-| Win rate | 49.8% |
-| Profit factor | 1.51 |
-| Average hold | 18.1 days |
+| Total return | +115.7% |
+| CAGR | +21.2% |
+| Sharpe ratio | 2.07 |
+| Max drawdown | 13.4% |
+| Total trades | 268 |
+| Win rate | 56.3% |
+| Profit factor | 1.89 |
+| Average hold | 15.6 days |
 
-**Exit distribution:** 80 stopped out · 110 timed out · 28 trailing stop · 17 target
+**Exit distribution:** 65 stopped out · 114 timed out · 25 trailing stop · 64 target
 
-| Year | Return | Trades | Win% | Max drawdown |
-|---|---|---|---|---|
-| 2022 | +19.9% | 49 | 51.0% | 8.1% |
-| 2023 | +47.6% | 50 | 62.0% | 3.5% |
-| 2024 | +6.1% | 78 | 51.3% | 9.4% |
-| 2025 | −4.9% | 58 | 36.2% | 7.5% |
+| Year | Return | Trades | Win% | PF | Max drawdown |
+|---|---|---|---|---|---|
+| 2022 | +25.9% | 53 | 43.4% | 1.84 | 13.4% |
+| 2023 | +47.5% | 74 | 71.6% | 4.17 | 4.8% |
+| 2024 | +20.1% | 84 | 63.1% | 2.11 | 5.6% |
+| 2025 | −4.2% | 57 | 38.6% | 0.78 | 8.3% |
+
+### Against buying the universe and holding it
+
+The honest benchmark, and the first thing worth knowing:
+
+| | Strategy | Equal-weight universe, buy & hold |
+|---|---|---|
+| Total return | +115.7% | **+181.7%** |
+| CAGR | +21.2% | **+29.6%** |
+| Max drawdown | **13.4%** | 25.8% |
+| Sharpe | **2.07** | 1.42 |
+
+**Buying all 400 stocks on day one and doing nothing beat this system by 66 percentage points.** Indian smallcaps had an exceptional four years; almost anything long made money.
+
+What the strategy did deliver is risk: a little over half the drawdown, and a materially better Sharpe, while holding at most five positions and sitting in cash whenever breadth is weak. That is a real result, but it is a *risk-adjusted* one — over this period the selection logic did not add return over its own universe.
+
+Both figures carry the same survivorship bias, so the comparison between them is fair even though neither is achievable.
 
 These numbers are optimistic. See [Known limitations](#known-limitations) for
 what is not modelled.
@@ -232,6 +258,53 @@ then be measured as a difference in outcomes rather than argued for.
 This matters because an LLM's contribution cannot be backtested here: there is no
 point-in-time news archive, and any model has already read the news from the test
 period. Forward validation is the only honest option.
+
+### The exit ladder is scaled to volatility, and it was measured
+
+An earlier ladder mixed units: the stop scaled with ATR while the target and the
+trail arming point were flat percentages. A 2%-ATR stock and a 5%-ATR stock were
+given stops proportional to their own movement and then asked to reach the same
+fixed 18%.
+
+Fixing it was not a matter of picking a multiplier. `3 × ATR` was tested first and
+lost badly (+53% against +82%); `4 × ATR` won. A 21% swing from one parameter is
+itself a warning that the strategy is sensitive to it, which is why the multiplier
+is pinned by a test rather than left to drift.
+
+The trail arming point had to move with the target. A flat 12% arming point sits
+*above* an ATR-scaled target on most stocks, so the trail would never arm.
+
+### Hybrid mode was removed, not disabled
+
+An earlier version removed the target and timeout from up to three winners so they
+could run indefinitely. It produced 80% of returns from ~28 long holds out of 232
+trades.
+
+It was deleted. A system earning from 250 ordinary trades degrades more gracefully
+than one depending on a handful of exceptional ones — and that handful is exactly
+where survivorship bias and overfitting concentrate, since the small illiquid names
+that ran for 40 days are the ones that survived to still be listed. Under the ATR
+ladder, turning it off was better outright (+85% against +74%).
+
+### Buy on the signal day, not the next morning
+
+The signal is a claim about today's action, so acting on it tomorrow means acting
+on a condition that has already begun resolving. Three measurements agreed: the
+median signal-close-to-next-open gap is **+0.47%**; that first night is worth
+**1.5×** a typical held night (+0.474% against +0.312%, at identical volatility);
+and the backtest improved on return, Sharpe and drawdown together.
+
+The cost is honesty. The backtest decides on a bar and fills at that same bar's
+close, which is a price it could not have known. Live closes most of the gap by
+scanning at 15:00 — when the filters are ~92% resolved — and buying before 15:30.
+The residual optimism is recorded under Known limitations.
+
+### No configuration flags for settled questions
+
+Every strategy question here was decided by measurement, and the losing branch was
+deleted rather than left behind a flag. Dead paths drift: they stop being
+exercised, stop being tested, and eventually stop working, while still looking
+like a supported option. Git history is the record of what was tried.
 
 ### Everything fails open
 
@@ -373,7 +446,7 @@ The first run downloads roughly four years of daily data for 400 stocks into
 pytest -q
 ```
 
-179 tests covering the screener, regime gate, exit ladder, scoring, risk gates,
+224 tests covering the screener, breadth gate, exit ladder, scoring, risk gates,
 fundamentals, indicators, the simulator, the scan's control flow, the post-mortem,
 the veto (fully stubbed, no API calls), and the health endpoint.
 
@@ -420,3 +493,20 @@ trust.
    forward instead.
 8. **`safe_yf_download` has no retry** — a single rate-limit response on the
    400-ticker batch ends that day's scan.
+9. **Buy-and-hold beat it.** Equal-weight holding the same universe returned
+   +181.7% against the strategy's +115.7%. The strategy's contribution over this
+   period was risk reduction, not return.
+10. **Trading costs are not in the engine.** Statutory NSE delivery charges are
+    0.26% per round trip and were estimated post-hoc; at 257 trades they consume
+    roughly a fifth of gross P&L before any slippage assumption.
+11. **The backtest fills at a price it could not have known.** A signal is decided
+    on a bar and filled at that bar's close. Live scans at 15:00 with ~92% of the
+    session's volume in and fills near 15:25, roughly 0.2–0.4% from the close.
+    Symmetric, but unquantified without intraday data.
+12. **Live under-reads volume at scan time.** At 15:00 only ~90–93% of the day's
+    volume has traded, so `volume_ratio` reads low and live takes fewer trades
+    than the backtest. Conservative, but the backtest overstates trade count.
+13. **The parameters have been fitted to this period.** The entry threshold, the
+    ATR multiplier and the breadth floor were all chosen or confirmed against the
+    same four years, across roughly twenty backtests. There is no untouched
+    holdout, so the live result should be expected to be worse.

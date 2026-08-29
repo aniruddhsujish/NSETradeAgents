@@ -38,7 +38,6 @@ class PortfolioSimulator:
                     "take_profit": t.take_profit,
                     "peak_price": t.peak_price,
                     "trail_stop": t.trail_stop,
-                    "hybrid_active": t.hybrid_active or False,
                     "atr_pct": t.atr_pct,
                     "opened_at": t.opened_at,
                     "sector": t.sector or "Unknown",
@@ -163,7 +162,6 @@ class PortfolioSimulator:
         ticker: str,
         peak_price: float,
         trail_stop: float,
-        hybrid_active: bool = False,
     ) -> None:
         """Store a position's new peak price and trailing stop."""
         with get_db() as db:
@@ -175,8 +173,6 @@ class PortfolioSimulator:
             if trade:
                 trade.peak_price = peak_price
                 trade.trail_stop = trail_stop
-                if hybrid_active:
-                    trade.hybrid_active = True
 
     def save_snapshot(
         self, open_prices: dict[str, float] | None = None

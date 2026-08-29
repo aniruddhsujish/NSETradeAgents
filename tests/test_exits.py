@@ -7,11 +7,13 @@ from app.portfolio.exits import (
     evaluate_exit,
     stop_pct,
     target_pct,
+    trail_arm_pct,
 )
 
 MAX_HOLD_DAYS = 21
 FLAT_STOP_PCT = 0.07
 FLAT_TARGET_PCT = 0.18
+FLAT_TRAIL_ARM_PCT = 0.12
 
 ENTRY = date(2024, 1, 1)
 # Entered at 100: stop 93, target 118
@@ -28,6 +30,12 @@ def patch_exit_settings(monkeypatch):
     monkeypatch.setattr("app.portfolio.exits.settings.max_hold_days", MAX_HOLD_DAYS)
     monkeypatch.setattr("app.portfolio.exits.settings.stop_loss_pct", FLAT_STOP_PCT)
     monkeypatch.setattr("app.portfolio.exits.settings.take_profit_pct", FLAT_TARGET_PCT)
+    monkeypatch.setattr(
+        "app.portfolio.exits.settings.trail_activation_pct", FLAT_TRAIL_ARM_PCT
+    )
+    monkeypatch.setattr("app.portfolio.exits.settings.stop_atr_mult", 2.5)
+    monkeypatch.setattr("app.portfolio.exits.settings.target_atr_mult", 4.0)
+    monkeypatch.setattr("app.portfolio.exits.settings.trail_arm_atr_mult", 2.0)
 
 
 def day(n: int) -> date:
@@ -139,28 +147,6 @@ def test_no_timeout_the_day_before():
     assert evaluate_exit(BASE, bar, day(MAX_HOLD_DAYS - 1)) is None
 
 
-# ── hybrid positions ──────────────────────────────────────────────────────────
-
-
-def test_hybrid_position_ignores_the_target():
-    """Hybrid positions ride the trail instead of capping at the target."""
-    pos = PositionView(**{**vars(BASE), "hybrid_active": True})
-    bar = Bar(open=115.0, high=125.0, low=114.0, close=124.0)
-    assert evaluate_exit(pos, bar, day(5)) is None
-
-
-def test_hybrid_position_ignores_the_timeout():
-    pos = PositionView(**{**vars(BASE), "hybrid_active": True})
-    bar = Bar(open=100.0, high=101.0, low=99.0, close=100.5)
-    assert evaluate_exit(pos, bar, day(MAX_HOLD_DAYS + 30)) is None
-
-
-def test_hybrid_position_still_honours_its_stop():
-    pos = PositionView(**{**vars(BASE), "hybrid_active": True, "trail_stop": 110.0})
-    bar = Bar(open=112.0, high=113.0, low=108.0, close=109.0)
-    assert evaluate_exit(pos, bar, day(5))[1] == "trail"
-
-
 # ── Bar.flat (the live path) ──────────────────────────────────────────────────
 
 
@@ -219,20 +205,59 @@ def test_missing_atr_falls_back_to_the_flat_stop(missing):
     assert stop_pct(missing) == FLAT_STOP_PCT
 
 
-def test_target_is_flat_today_and_ignores_atr():
-    """target_pct takes atr_pct only as the seam for an ATR-scaled target.
-    When this test starts failing, that change has landed."""
-    assert target_pct(2.0) == FLAT_TARGET_PCT
-    assert target_pct(6.0) == FLAT_TARGET_PCT
-    assert target_pct(None) == FLAT_TARGET_PCT
+@pytest.mark.parametrize(
+    "atr_pct,expected",
+    [
+        (1.5, 0.06),    # floor, exactly where it stops binding
+        (2.0, 0.08),
+        (3.0, 0.12),
+        (3.33, 0.1332),
+        (5.0, 0.20),    # cap, exactly where it starts binding
+        (7.0, 0.20),    # cap
+    ],
+)
+def test_target_is_4x_atr_bounded_6_to_20(atr_pct, expected):
+    """3x was measured and lost badly (+53% vs +82%); 4x won. The multiplier
+    is load-bearing, so pin it."""
+    assert target_pct(atr_pct) == pytest.approx(expected)
 
 
-def test_reward_to_risk_currently_varies_with_volatility():
-    """Today a calm stock is graded far better than a jumpy one. An ATR-scaled
-    target collapses this to a constant, which is why the scoring dimension
-    has to be dealt with in the same change."""
-    calm = target_pct(2.0) / stop_pct(2.0)
-    jumpy = target_pct(4.0) / stop_pct(4.0)
+@pytest.mark.parametrize(
+    "atr_pct,expected",
+    [
+        (1.5, 0.04),    # floor
+        (3.0, 0.06),
+        (3.33, 0.0666),
+        (6.0, 0.12),    # cap
+        (9.0, 0.12),    # cap
+    ],
+)
+def test_trail_arms_at_2x_atr_bounded_4_to_12(atr_pct, expected):
+    assert trail_arm_pct(atr_pct) == pytest.approx(expected)
 
-    assert calm == pytest.approx(3.6)
-    assert jumpy == pytest.approx(1.8)
+
+@pytest.mark.parametrize("atr_pct", [1.5, 2.0, 3.0, 3.33, 4.0, 5.0, 6.0, 8.0, 12.0])
+def test_the_trail_always_arms_below_the_target(atr_pct):
+    """The invariant the whole ladder rests on.
+
+    A flat 12% arming point against an ATR-scaled target sits *above* the
+    target sits above the target on most stocks, so the trail would never arm.
+    """
+    assert trail_arm_pct(atr_pct) < target_pct(atr_pct)
+
+
+@pytest.mark.parametrize("missing", [None, 0.0, -1.0])
+def test_missing_atr_falls_back_to_the_flat_ladder(missing):
+    assert target_pct(missing) == FLAT_TARGET_PCT
+    assert trail_arm_pct(missing) == FLAT_TRAIL_ARM_PCT
+
+
+def test_reward_to_risk_is_now_roughly_constant():
+    """The ATR cancels between a 4x target and a 2.5x stop, so risk/reward no
+    longer varies with volatility — which is why the scoring dimension built on
+    it can no longer discriminate between candidates."""
+    mid = target_pct(3.0) / stop_pct(3.0)
+    high = target_pct(4.0) / stop_pct(4.0)
+
+    assert mid == pytest.approx(1.6)
+    assert high == pytest.approx(1.6)
