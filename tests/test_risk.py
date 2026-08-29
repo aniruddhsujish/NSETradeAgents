@@ -22,7 +22,6 @@ def test_approved_happy_path():
         current_price=500.0,
         portfolio_cash=80000,
         open_positions=2,
-        technical_signal="BUY",
     )
 
     assert result["approved"] is True
@@ -38,7 +37,6 @@ def test_blocked_max_positions():
         current_price=500.0,
         portfolio_cash=80000,
         open_positions=4,  # At max positions
-        technical_signal="BUY",
     )
 
     assert result["approved"] is False
@@ -51,7 +49,6 @@ def test_blocked_price_too_high():
         current_price=30000.0,  # Exceeds max_positioN_value of 25000
         portfolio_cash=80000,
         open_positions=2,
-        technical_signal="BUY",
     )
 
     assert result["approved"] is False
@@ -66,7 +63,6 @@ def test_blocked_invalid_price():
         current_price=-0,  # Invalid price
         portfolio_cash=80000,
         open_positions=2,
-        technical_signal="BUY",
     )
 
     assert result["approved"] is False
@@ -79,7 +75,6 @@ def test_approved_boundary_positions():
         current_price=500.0,
         portfolio_cash=80000,
         open_positions=3,  # One less than max positions
-        technical_signal="BUY",
     )
 
     assert result["approved"] is True

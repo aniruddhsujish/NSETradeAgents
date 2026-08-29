@@ -191,23 +191,52 @@ each shipped **alone** so the harness can attribute the change.
 
 Ordered by expected value ÷ cost:
 
-### B1 — ATR-scaled target *(one line)*
+> **Measured 2026-08-28/29.** B1 **shipped at 4x**, not 3x — 3x was tested first
+> and lost badly (+53% against +82%), because the target has to stay far enough
+> out that the trail can arm below it. B2 and B9 are **refuted** — see notes on
+> each. B3 is **refuted**: filtering weak closes removes trades averaging +2.12%.
+> Also shipped: breadth regime (B7's core idea), hybrid removed entirely, and
+> same-day entry at the close. Everything else below is untested.
+
+### B1 — ATR-scaled target *(one line)* — **SHIPPED at 4x ATR**
 Replace the flat 18% with `target = entry × (1 + 4 × ATR%)`. A 2.5%-ATR stock
 targets 10%; a 4.5%-ATR stock targets 18%. Puts the target *inside* the
 distribution of achievable 21-day moves. **Directly attacks the 110 timeouts and
 the 17-target problem** — the highest-value single change identified.
 
-### B2 — Relative momentum instead of absolute *(needs index data in the store)*
+### B2 — Relative momentum instead of absolute — **REFUTED**
+
+Measured against Nifty: absolute momentum sorts *better* (bottom-to-top quartiles
+−1.03% → +5.05%) than relative (+1.08% → +3.95%). And 2025 had the **highest**
+median relative strength of any year with the worst returns — in a falling tape,
+"strong versus the index" means "the last thing still standing", and those snap
+back hardest. Caveat: benchmarked against Nifty, which is the wrong index. Versus
+the universe itself is untested.
+
+The regime problem it was meant to solve was fixed by breadth instead.
+
+<details><summary>original proposal</summary>
 Rank and filter on performance **versus the Midcap 150**, not versus zero. In a
 −5% tape a stock at −1% is genuinely strong; in a +5% tape a stock at +2% is a
 laggard the current screen buys happily. Self-adjusts across regimes rather than
 needing a regime switch bolted on, and cross-sectional momentum is the version
 with actual empirical support. **The real fix for bad regimes.**
 
-### B3 — Close-in-top-of-range filter *(one line)*
+</details>
+
+### B3 — Close-in-top-of-range filter — **REFUTED**
+
+Measured: the weakest-close quartile returned **+2.22%** with a 54% win rate, and
+applying the filter removes 49 trades averaging **+2.12%**, dropping per-trade
+edge from +1.63% to +1.51%. The theory that a weak close is distribution does not
+hold in this data.
+
+<details><summary>original proposal</summary>
 Require `(close − low) / (high − low) > 0.6`. A 3× volume day closing in the
 bottom third of its range is distribution, not accumulation — someone is selling
 into the buying. Removes the worst entries for free.
+
+</details>
 
 ### B4 — Stale exit *(small)*
 Exit at ~day 9 if under ~+4%. Note it does **not** improve win rate; it improves
@@ -222,21 +251,47 @@ never compounds. Nearly free.
 Reject entries where `(price − sma20) / sma20` exceeds ~8%. A stock stretched far
 above its short MA mean-reverts, and that reversion is what hits the stops.
 
-### B7 — Breadth-based regime dial *(moderate)*
+### B7 — Breadth-based regime dial — **core idea SHIPPED**
+
+The binary gate now measures breadth of the traded universe (% above their own
+SMA50, floor 50%) instead of Nifty 50. Worth +21 points on the shipped exit
+configuration, and it fixed the diagnosis: Nifty rose 9.2% in 2025 while the
+median universe stock fell 5.3%.
+
+Still unbuilt: the *dial* — varying slot count and position size by breadth
+rather than a single on/off threshold.
+
+<details><summary>original proposal</summary>
 Replace the binary `Nifty < SMA50` freeze with **% of universe above its own
 SMA50** — continuous and *leading* (breadth deteriorates before the index does).
 Feeds a dial: strong → 5 slots full size, neutral → 3, weak → 2 at half size.
 Never a total freeze. Attacks the dead months.
 
+</details>
+
 ### B8 — Risk-normalized sizing *(moderate)*
 `quantity = risk_budget / (entry − stop)` at ~0.9% of equity. Equalizes risk
 across volatility regimes; targets Sharpe.
 
-### B9 — Pullback limit entry *(changes the fill model)*
+### B9 — Pullback limit entry — **REFUTED, do not build**
+
+Measured on 257 trades. A limit at the signal close fills 83% of the time and
+saves 0.50% — but the trades it misses average **+4.15%** against **+1.53%** for
+the ones it catches. Adverse selection: a stock that opens strong and never dips
+is exactly the setup being hunted. Net of slot reuse it is a wash (≈97 saved
+against ≈86 forgone), which does not justify a fill model and unfilled-order
+bookkeeping.
+
+It did surface something better — the signal-close-to-next-open gap of +0.47% —
+which led to same-day entry at the close instead.
+
+<details><summary>original proposal</summary>
 Instead of a market order at the next open, rest a limit near the prior close.
 Misses the runaway gappers but gains several percent of cushion above the stop on
 everything that fills. Fill rate is measurable directly from stored bars — check
 how often the next day's low reaches the prior close before building it.
+
+</details>
 
 ### B10 — Scale out in two pieces *(simulator work)*
 Sell half at +1.5×ATR, trail the remainder. Converts part of the 110 timeouts

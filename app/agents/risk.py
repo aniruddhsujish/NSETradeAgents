@@ -10,7 +10,6 @@ def run_risk_check(
     current_price: float,
     portfolio_cash: float,
     open_positions: int,
-    technical_signal: str,
     atr_pct: float | None = None,
     ticker_sector: str = "Unknown",
     open_position_sectors: list[str] | None = None,

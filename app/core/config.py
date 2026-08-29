@@ -17,8 +17,6 @@ class Settings(BaseSettings):
     # will need these again. Optional so the app starts without them.
     anthropic_api_key: str | None = None
     tavily_api_key: str | None = None
-    llm_model_fast: str = "claude-haiku-4-5-20251001"
-    llm_model_smart: str = "claude-sonnet-4-6"
     llm_model_veto: str = "claude-opus-5"
 
     # Portfolio
@@ -27,10 +25,6 @@ class Settings(BaseSettings):
 
     # Database
     database_url: str = "sqlite:///swing_bot.db"
-
-    # API
-    api_host: str = "0.0.0.0"
-    api_port: int = 8000
 
     # Risk
     max_positions: int = 5

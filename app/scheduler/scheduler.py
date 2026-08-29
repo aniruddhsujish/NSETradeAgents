@@ -8,7 +8,6 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from app.core.logging import setup_logging
-from app.core.config import settings
 from app.portfolio.exits import Bar, PositionView, evaluate_exit, update_trail
 from app.portfolio.postmortem import fill_outcomes
 from app.portfolio.simulator import simulator

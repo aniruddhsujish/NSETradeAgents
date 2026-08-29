@@ -82,7 +82,7 @@ class VetoVerdict(BaseModel):
     )
 
 
-SYSTEM_PROMPT = f"""You are the final check before an automated system buys an Indian
+SYSTEM_PROMPT = """You are the final check before an automated system buys an Indian
 smallcap or midcap stock for a 1-4 week hold.
 
 A deterministic screener has already decided this setup looks good on price and volume.

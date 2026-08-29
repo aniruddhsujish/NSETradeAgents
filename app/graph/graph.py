@@ -96,7 +96,6 @@ def risk_node(state: TradingState) -> dict:
         current_price=state["current_price"],
         portfolio_cash=state["portfolio_cash"],
         open_positions=state["open_positions"],
-        technical_signal=tech.get("signal", "HOLD"),
         atr_pct=atr_pct,
         ticker_sector=ctx.get("sector", "Unknown"),
         open_position_sectors=state.get("open_position_sectors") or [],

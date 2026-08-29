@@ -117,6 +117,11 @@ class DecisionRecord(Base):
     # outcome — empty until the post-mortem fills it
     outcome_pnl_pct: Mapped[Optional[float]] = mapped_column(nullable=True)
     outcome_reason: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    outcome_exit_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    # Return minus the smallcap index over the same window. Raw return alone
+    # misjudges whole years: in 2025 the system lost 4.2% while its universe
+    # lost 5.3%, which is a good year that looks like a bad one.
+    outcome_alpha_pct: Mapped[Optional[float]] = mapped_column(nullable=True)
     outcome_filled_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime, nullable=True
     )

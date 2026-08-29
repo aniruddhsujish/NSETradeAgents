@@ -160,8 +160,13 @@ holding the score, the four bands, six indicators, the git commit, the block
 reason, and the veto's full verdict.
 
 The 16:00 post-mortem replays each decision through the same exit ladder the live
-system uses and fills in what it would have returned. Rejected candidates get
-graded alongside accepted ones.
+system uses — entering at the decision day's close, exactly as live does — and
+fills in what it would have returned. Rejected candidates get graded alongside
+accepted ones.
+
+Outcomes are recorded both raw and as **alpha against the Nifty Smallcap 250**,
+because raw return misjudges whole years: in 2025 the system lost 4.2% while its
+universe lost 5.3%, which is a good year that looks like a bad one.
 
 The `/decisions` page shows all of this, plus:
 
@@ -446,8 +451,9 @@ The first run downloads roughly four years of daily data for 400 stocks into
 pytest -q
 ```
 
-224 tests covering the screener, breadth gate, exit ladder, scoring, risk gates,
-fundamentals, indicators, the simulator, the scan's control flow, the post-mortem,
+234 tests covering the screener, breadth gate, exit ladder, scoring, risk gates,
+fundamentals, indicators, the simulator, the backtest loop, the scan's control
+flow, the post-mortem,
 the veto (fully stubbed, no API calls), and the health endpoint.
 
 ---

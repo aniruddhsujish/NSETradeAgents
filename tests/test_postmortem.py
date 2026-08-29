@@ -50,49 +50,57 @@ def patch_settings(monkeypatch):
 # ── _simulate ─────────────────────────────────────────────────────────────────
 
 
-def test_stop_out_is_measured_from_the_next_open():
-    """Entry is the bar *after* the decision, never the decision-day close."""
-    pnl, reason = _simulate(record(), bars([999.0, 100.0, 95.0, 88.0, 80.0]))
+def test_entry_is_the_decision_day_close():
+    """The post-mortem must grade the trade the live system actually takes.
+
+    Live scans at 15:00 and buys before the close, so entry is the close of
+    the decision day — not the next morning's open.
+    """
+    pnl, reason, exit_date = _simulate(record(), bars([100.0, 95.0, 88.0, 80.0]))
+
     assert reason == "stop"
-    # 999 on the decision day is ignored; entry is 100 the next morning
-    assert pnl < 0
+    # atr 3% -> stop 2.5x = 7.5% -> 92.5, breached by the 88 bar
+    assert pnl == pytest.approx(-12.0, abs=0.5)
+    assert exit_date == ENTRY_DAY + timedelta(days=2)
 
 
 def test_gap_through_the_stop_fills_at_the_open():
-    # atr 3% -> stop at 2.5x = 7.5% -> 92.5. The bar opens far below it.
-    pnl, reason = _simulate(record(), bars([100.0, 100.0, 80.0]))
+    # entry 100, stop 92.5. The next bar opens far below it.
+    pnl, reason, _ = _simulate(record(), bars([100.0, 80.0]))
     assert reason == "stop"
     assert pnl == pytest.approx(-20.0, abs=0.5)  # filled at 80, not 92.5
 
 
 def test_target_hit():
-    pnl, reason = _simulate(record(), bars([100.0] + [100 + i * 3 for i in range(1, 12)]))
+    """Target is 4x ATR, so 12% on a 3%-ATR stock — not the flat 18%."""
+    pnl, reason, _ = _simulate(record(), bars([100.0] + [100 + i * 3 for i in range(1, 8)]))
     assert reason == "target"
-    assert pnl == pytest.approx(18.0, abs=0.5)
+    assert pnl == pytest.approx(12.0, abs=0.5)
 
 
 def test_flat_stock_times_out_at_zero():
-    pnl, reason = _simulate(record(), bars([100.0] * 26))
+    pnl, reason, _ = _simulate(record(), bars([100.0] * 26))
     assert reason == "timeout"
     assert pnl == pytest.approx(0.0, abs=0.5)
 
 
 def test_trailing_stop_locks_in_gains_below_the_target():
-    """Runs to +15% (never reaching the +18% target), then fades.
+    """Runs to +10% (never reaching the +12% target), then fades.
 
-    Entry 100 -> stop 92.5, target 118. Trail arms at 112, peak 115,
-    trail sits at 115 x 0.94 = 108.1, and the fade to 105 trips it.
+    Entry 100 -> stop 92.5, target 112. The trail arms at 2x ATR (+6%), peak
+    110 puts it at 110 x 0.94 = 103.4, and the fade to 103 trips it.
 
     The assertion on `reason` is what distinguishes a working trail from a
     position that simply timed out.
     """
-    pnl, reason = _simulate(record(), bars([100.0, 100.0, 106.0, 112.0, 115.0, 105.0]))
+    pnl, reason, _ = _simulate(record(), bars([100.0, 104.0, 110.0, 103.0]))
     assert reason == "trail"
-    assert pnl == pytest.approx(5.0, abs=0.5)
+    assert pnl == pytest.approx(3.0, abs=0.5)
 
 
 def test_returns_none_without_enough_history():
-    assert _simulate(record(), bars([100.0, 101.0])) is None
+    """A decision day with no bar after it cannot be graded yet."""
+    assert _simulate(record(), bars([100.0])) is None
 
 
 def test_returns_none_when_still_open():
@@ -101,9 +109,10 @@ def test_returns_none_when_still_open():
 
 
 def test_zero_atr_falls_back_to_the_default_stop():
-    """With no ATR recorded, the stop falls back to the configured default."""
-    pnl, reason = _simulate(record(atr_pct=0.0), bars([100.0, 100.0, 90.0]))
+    """With no ATR recorded, both levels fall back to the flat defaults."""
+    pnl, reason, _ = _simulate(record(atr_pct=0.0), bars([100.0, 90.0]))
     assert reason == "stop"
+    assert pnl == pytest.approx(-10.0, abs=0.5)  # flat 7% stop at 93, gapped to 90
 
 
 # ── fill_outcomes ─────────────────────────────────────────────────────────────
@@ -190,3 +199,84 @@ def test_unresolved_records_stay_pending(pm_db, monkeypatch):
 
     assert fill_outcomes() == 0
     assert pm_db.query(DecisionRecord).first().outcome_pnl_pct is None
+
+
+# ── alpha ─────────────────────────────────────────────────────────────────────
+#
+# Raw return misjudges whole years. In 2025 the system lost 4.2% while its
+# universe lost 5.3% — a good year that looks like a bad one.
+
+
+def test_alpha_is_the_outcome_minus_the_benchmark(pm_db, monkeypatch):
+    add_record(pm_db)
+    start = date.today() - timedelta(days=40)
+    stock = bars([100.0, 95.0, 88.0, 80.0], start=start)   # stops out at -12%
+    index = bars([100.0, 98.0, 96.0, 94.0], start=start)   # index falls too
+
+    def fake_download(tickers, *a, **k):
+        return index if tickers == postmortem.BENCHMARK else stock
+
+    monkeypatch.setattr(postmortem, "safe_yf_download", fake_download)
+    monkeypatch.setattr(postmortem, "extract_ticker_df", lambda raw, t: stock)
+
+    assert fill_outcomes() == 1
+
+    row = pm_db.query(DecisionRecord).first()
+    assert row.outcome_pnl_pct == pytest.approx(-12.0, abs=0.5)
+    # index went 100 -> 96 over the same window, so -4%
+    assert row.outcome_alpha_pct == pytest.approx(-8.0, abs=0.5)
+
+
+def test_losing_less_than_the_market_is_positive_alpha(pm_db, monkeypatch):
+    add_record(pm_db)
+    start = date.today() - timedelta(days=40)
+    stock = bars([100.0, 95.0, 88.0, 80.0], start=start)   # -12%
+    index = bars([100.0, 90.0, 80.0, 70.0], start=start)   # index falls harder
+
+    def fake_download(tickers, *a, **k):
+        return index if tickers == postmortem.BENCHMARK else stock
+
+    monkeypatch.setattr(postmortem, "safe_yf_download", fake_download)
+    monkeypatch.setattr(postmortem, "extract_ticker_df", lambda raw, t: stock)
+
+    fill_outcomes()
+
+    row = pm_db.query(DecisionRecord).first()
+    assert row.outcome_pnl_pct < 0
+    assert row.outcome_alpha_pct > 0
+
+
+def test_a_missing_benchmark_still_records_the_raw_outcome(pm_db, monkeypatch):
+    """A failed index download must not cost us the outcome itself."""
+    add_record(pm_db)
+    start = date.today() - timedelta(days=40)
+    stock = bars([100.0, 95.0, 88.0, 80.0], start=start)
+
+    def fake_download(tickers, *a, **k):
+        if tickers == postmortem.BENCHMARK:
+            raise RuntimeError("index unavailable")
+        return stock
+
+    monkeypatch.setattr(postmortem, "safe_yf_download", fake_download)
+    monkeypatch.setattr(postmortem, "extract_ticker_df", lambda raw, t: stock)
+
+    assert fill_outcomes() == 1
+
+    row = pm_db.query(DecisionRecord).first()
+    assert row.outcome_pnl_pct is not None
+    assert row.outcome_alpha_pct is None
+
+
+def test_the_exit_date_is_recorded(pm_db, monkeypatch):
+    """Without it the holding window is unknown, so alpha cannot be recomputed."""
+    add_record(pm_db)
+    start = date.today() - timedelta(days=40)
+    frame = bars([100.0, 95.0, 88.0, 80.0], start=start)
+
+    monkeypatch.setattr(postmortem, "safe_yf_download", lambda *a, **k: frame)
+    monkeypatch.setattr(postmortem, "extract_ticker_df", lambda raw, t: frame)
+
+    fill_outcomes()
+
+    row = pm_db.query(DecisionRecord).first()
+    assert row.outcome_exit_date == start + timedelta(days=2)
