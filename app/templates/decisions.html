@@ -42,7 +42,7 @@ content %}
 
   <div class="bg-slate-900 rounded-xl p-5 border border-slate-800">
     <p class="text-slate-500 text-xs uppercase tracking-widest mb-1">
-      Veto Edge
+      Veto Edge <span class="text-slate-700 normal-case">(alpha)</span>
     </p>
     {% if stats.edge is not none %}
     <p
@@ -83,12 +83,16 @@ content %}
 <!-- How to read the edge number -->
 <div class="bg-slate-900/50 border border-slate-800 rounded-xl px-5 py-3 mb-8">
   <p class="text-xs text-slate-500 leading-relaxed">
-    <span class="text-slate-400">Veto edge</span> = mean outcome of KILLed
-    candidates minus mean outcome of PASSed ones.
+    <span class="text-slate-400">Veto edge</span> = mean <span
+      class="text-slate-400">alpha</span
+    >
+    of KILLed candidates minus mean alpha of PASSed ones.
     <span class="text-emerald-400">Negative is good</span> — it means the veto
-    blocked trades that went on to do worse than the ones it allowed. Both
-    figures need outcomes filled in by the post-mortem, so it stays blank until
-    decisions are ~21 days old.
+    blocked trades that went on to do worse than the ones it allowed. Measured
+    against the Nifty Smallcap 250 rather than raw return, because the veto does
+    not fire evenly across market conditions and a raw comparison would partly
+    measure which weeks it happened to fire in. Needs outcomes filled in by the
+    post-mortem, so it stays blank until decisions are ~21 days old.
     {% if stats.veto_errored %}
     <span class="text-red-400"
       >{{ stats.veto_errored }} veto run(s) failed and were recorded as PASS —
@@ -174,9 +178,17 @@ content %}
         >
           {% if r.outcome_pnl_pct is not none %} {{ "+" if r.outcome_pnl_pct > 0
           }}{{ r.outcome_pnl_pct }}%
-          <span class="text-xs text-slate-600 font-normal"
-            >{{ r.outcome_reason }}</span
-          >
+          <span class="block text-xs text-slate-600 font-normal">
+            {% if r.outcome_alpha_pct is not none %}
+            <span
+              class="{% if r.outcome_alpha_pct > 0 %}text-emerald-600{% else %}text-red-600{% endif %}"
+              title="versus the Nifty Smallcap 250 over the same window"
+              >{{ "+" if r.outcome_alpha_pct > 0 }}{{ r.outcome_alpha_pct }}%
+              alpha</span
+            >
+            ·
+            {% endif %}{{ r.outcome_reason }}
+          </span>
           {% else %} pending {% endif %}
         </td>
       </tr>

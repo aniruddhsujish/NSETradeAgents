@@ -196,6 +196,8 @@ def decisions(request: Request):
                 "veto_model": r.veto_model,
                 "veto_mode": r.veto_mode,
                 "outcome_pnl_pct": r.outcome_pnl_pct,
+                "outcome_alpha_pct": r.outcome_alpha_pct,
+                "outcome_exit_date": r.outcome_exit_date,
                 "outcome_reason": r.outcome_reason,
             }
             for r in rows
@@ -221,12 +223,18 @@ def decisions(request: Request):
         )
 
         def mean_outcome(verdict: str) -> float | None:
+            """Mean alpha for one verdict, not mean raw return.
+
+            The veto does not kill evenly across market conditions, so a raw
+            comparison partly measures which weeks it happened to fire in.
+            Alpha removes that, which is the whole point of recording it.
+            """
             vals = [
                 v
-                for (v,) in db.query(DecisionRecord.outcome_pnl_pct)
+                for (v,) in db.query(DecisionRecord.outcome_alpha_pct)
                 .filter(
                     DecisionRecord.veto_verdict == verdict,
-                    DecisionRecord.outcome_pnl_pct.isnot(None),
+                    DecisionRecord.outcome_alpha_pct.isnot(None),
                 )
                 .all()
             ]
