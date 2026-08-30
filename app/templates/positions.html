@@ -126,25 +126,14 @@ content %}
       </div>
     </div>
 
-    <!-- Confidence + reasoning -->
-    <div x-data="{expanded: false}">
-      <div class="flex items-center gap-3 mb-1">
-        <span class="text-xs text-slate-500">
-          {{ trade.confidence | int }}% confidence
-        </span>
-        <button
-          @click="expanded = !expanded"
-          class="text-xs text-slate-600 hover:text-slate-400 transition"
-        >
-          <span x-text="expanded ? '↑ collapse' : '↓ read more'"></span>
-        </button>
-      </div>
-      <p
-        :class="expanded ? '' : 'line-clamp-2'"
-        class="text-slate-400 text-xs leading-relaxed transition-all"
-      >
-        {{ trade.reasoning or "No reasoning provided." }}
-      </p>
+    <!-- Rules score + technical read at entry -->
+    <div class="flex items-baseline gap-3">
+      <span class="text-xs text-slate-500">
+        score <span class="text-slate-300 font-bold">{{ trade.confidence | int }}</span>/100
+      </span>
+      <span class="text-slate-500 text-xs leading-relaxed">
+        {{ trade.reasoning or "—" }}
+      </span>
     </div>
   </div>
   {% endfor %}

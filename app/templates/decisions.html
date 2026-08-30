@@ -1,0 +1,269 @@
+{% extends "base.html" %} {% block title %}Decisions{% endblock %} {% block
+content %}
+
+<!-- Summary -->
+<div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-4">
+  <div class="bg-slate-900 rounded-xl p-5 border border-slate-800">
+    <p class="text-slate-500 text-xs uppercase tracking-widest mb-1">
+      Candidates
+    </p>
+    <p class="text-2xl font-bold text-white">{{ stats.total }}</p>
+  </div>
+
+  <div class="bg-slate-900 rounded-xl p-5 border border-slate-800">
+    <p class="text-slate-500 text-xs uppercase tracking-widest mb-1">
+      Veto Ran
+    </p>
+    <p class="text-2xl font-bold text-white">{{ stats.veto_seen }}</p>
+  </div>
+
+  <div class="bg-slate-900 rounded-xl p-5 border border-slate-800">
+    <p class="text-slate-500 text-xs uppercase tracking-widest mb-1">
+      Kill Rate
+    </p>
+    <p class="text-2xl font-bold text-amber-400">
+      {{ stats.kill_rate }}%
+      <span class="text-xs text-slate-600 font-normal"
+        >({{ stats.veto_killed }})</span
+      >
+    </p>
+  </div>
+
+  <div class="bg-slate-900 rounded-xl p-5 border border-slate-800">
+    <p class="text-slate-500 text-xs uppercase tracking-widest mb-1">
+      Veto Errors
+    </p>
+    <p
+      class="text-2xl font-bold {% if stats.veto_errored %}text-red-400{% else %}text-slate-400{% endif %}"
+    >
+      {{ stats.veto_errored }}
+    </p>
+  </div>
+
+  <div class="bg-slate-900 rounded-xl p-5 border border-slate-800">
+    <p class="text-slate-500 text-xs uppercase tracking-widest mb-1">
+      Veto Edge <span class="text-slate-700 normal-case">(alpha)</span>
+    </p>
+    {% if stats.edge is not none %}
+    <p
+      class="text-2xl font-bold {% if stats.edge < 0 %}text-emerald-400{% else %}text-red-400{% endif %}"
+    >
+      {{ "+" if stats.edge > 0 }}{{ stats.edge }}%
+    </p>
+    {% else %}
+    <p class="text-2xl font-bold text-slate-600">—</p>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Kill reasons -->
+{% if stats.kill_reasons %}
+<div class="bg-slate-900 rounded-xl p-5 border border-slate-800 mb-4">
+  <p class="text-slate-500 text-xs uppercase tracking-widest mb-3">
+    Kill Reasons
+  </p>
+  <div class="space-y-2">
+    {% for r in stats.kill_reasons %}
+    <div class="flex items-center gap-3">
+      <span class="text-xs text-slate-400 w-48 shrink-0"
+        >{{ r.reason }}</span
+      >
+      <div class="flex-1 bg-slate-800 rounded-full h-2 overflow-hidden">
+        <div class="bg-amber-500 h-full" style="width: {{ r.pct }}%"></div>
+      </div>
+      <span class="text-xs text-slate-500 w-16 text-right shrink-0"
+        >{{ r.count }} · {{ r.pct }}%</span
+      >
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- How to read the edge number -->
+<div class="bg-slate-900/50 border border-slate-800 rounded-xl px-5 py-3 mb-8">
+  <p class="text-xs text-slate-500 leading-relaxed">
+    <span class="text-slate-400">Veto edge</span> = mean <span
+      class="text-slate-400">alpha</span
+    >
+    of KILLed candidates minus mean alpha of PASSed ones.
+    <span class="text-emerald-400">Negative is good</span> — it means the veto
+    blocked trades that went on to do worse than the ones it allowed. Measured
+    against the Nifty Smallcap 250 rather than raw return, because the veto does
+    not fire evenly across market conditions and a raw comparison would partly
+    measure which weeks it happened to fire in. Needs outcomes filled in by the
+    post-mortem, so it stays blank until decisions are ~21 days old.
+    {% if stats.veto_errored %}
+    <span class="text-red-400"
+      >{{ stats.veto_errored }} veto run(s) failed and were recorded as PASS —
+      those are outages, not verdicts.</span
+    >
+    {% endif %}
+  </p>
+</div>
+
+{% if not records %}
+<div class="bg-slate-900 border border-slate-800 rounded-xl p-12 text-center">
+  <p class="text-slate-500 text-sm">No decisions recorded yet.</p>
+</div>
+
+{% else %}
+<div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+  <table class="w-full text-sm">
+    <thead>
+      <tr
+        class="border-b border-slate-800 text-slate-500 text-xs uppercase tracking-widest"
+      >
+        <th class="text-left px-5 py-4">Date</th>
+        <th class="text-left px-5 py-4">Ticker</th>
+        <th class="text-right px-5 py-4">Score</th>
+        <th class="text-left px-5 py-4">Bands</th>
+        <th class="text-center px-5 py-4">Taken</th>
+        <th class="text-center px-5 py-4">Veto</th>
+        <th class="text-right px-5 py-4">Outcome</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in records %}
+      <tr
+        x-data="{open: false}"
+        class="border-b border-slate-800 last:border-0 hover:bg-slate-800/50 transition cursor-pointer"
+        @click="open = !open"
+      >
+        <td class="px-5 py-3 text-slate-500 whitespace-nowrap">
+          {{ r.as_of.strftime("%d %b") if r.as_of else "—" }}
+        </td>
+
+        <td class="px-5 py-3 font-bold text-white">
+          {{ r.ticker.replace(".NS", "") }}
+        </td>
+
+        <td class="px-5 py-3 text-right font-bold text-slate-300">
+          {{ r.score if r.score is not none else "—" }}
+        </td>
+
+        <td class="px-5 py-3 text-xs text-slate-500">
+          {{ r.bands | join(" · ") if r.bands else "—" }}
+        </td>
+
+        <td class="px-5 py-3 text-center">
+          {% if r.entered %}
+          <span class="text-emerald-400">●</span>
+          {% else %}
+          <span class="text-slate-700">○</span>
+          {% endif %}
+        </td>
+
+        <td class="px-5 py-3 text-center whitespace-nowrap">
+          {% if r.veto_errored %}
+          <span
+            class="text-xs px-2 py-0.5 rounded-full bg-red-950 text-red-400"
+            title="The veto failed and defaulted to PASS"
+            >error</span
+          >
+          {% elif r.veto_verdict == "KILL" %}
+          <span
+            class="text-xs px-2 py-0.5 rounded-full bg-amber-900 text-amber-300"
+            >{{ r.veto_reason }}</span
+          >
+          {% elif r.veto_verdict == "PASS" %}
+          <span class="text-xs text-slate-600">pass</span>
+          {% else %}
+          <span class="text-xs text-slate-700">—</span>
+          {% endif %}
+        </td>
+
+        <td
+          class="px-5 py-3 text-right font-bold whitespace-nowrap {% if (r.outcome_pnl_pct or 0) > 0 %}text-emerald-400{% elif (r.outcome_pnl_pct or 0) < 0 %}text-red-400{% else %}text-slate-600{% endif %}"
+        >
+          {% if r.outcome_pnl_pct is not none %} {{ "+" if r.outcome_pnl_pct > 0
+          }}{{ r.outcome_pnl_pct }}%
+          <span class="block text-xs text-slate-600 font-normal">
+            {% if r.outcome_alpha_pct is not none %}
+            <span
+              class="{% if r.outcome_alpha_pct > 0 %}text-emerald-600{% else %}text-red-600{% endif %}"
+              title="versus the Nifty Smallcap 250 over the same window"
+              >{{ "+" if r.outcome_alpha_pct > 0 }}{{ r.outcome_alpha_pct }}%
+              alpha</span
+            >
+            ·
+            {% endif %}{{ r.outcome_reason }}
+          </span>
+          {% else %} pending {% endif %}
+        </td>
+      </tr>
+
+      <!-- Expanded detail -->
+      <tr x-show="open" x-cloak class="bg-slate-950/60">
+        <td colspan="7" class="px-5 py-4 space-y-3">
+          {% if r.veto_cited_fact %}
+          <div>
+            <p class="text-slate-500 text-xs uppercase tracking-widest mb-1">
+              Cited fact
+            </p>
+            <p class="text-slate-300 text-xs leading-relaxed">
+              {{ r.veto_cited_fact }}
+            </p>
+            {% if r.veto_source_url %}
+            <a
+              href="{{ r.veto_source_url }}"
+              target="_blank"
+              rel="noopener"
+              @click.stop
+              class="text-xs text-emerald-500 hover:text-emerald-400 break-all"
+              >{{ r.veto_source_url }}</a
+            >
+            {% endif %}
+          </div>
+          {% endif %} {% if r.veto_checked %}
+          <div>
+            <p class="text-slate-500 text-xs uppercase tracking-widest mb-1">
+              What the veto checked
+            </p>
+            <p class="text-slate-400 text-xs leading-relaxed">
+              {{ r.veto_checked }}
+            </p>
+          </div>
+          {% endif %} {% if r.block_reason %}
+          <div>
+            <p class="text-slate-500 text-xs uppercase tracking-widest mb-1">
+              Why it was not taken
+            </p>
+            <p class="text-slate-400 text-xs leading-relaxed">
+              {{ r.block_reason }}
+            </p>
+          </div>
+          {% endif %} {% if r.veto_transcript %}
+          <details class="group" @click.stop>
+            <summary
+              class="cursor-pointer text-slate-500 text-xs uppercase tracking-widest hover:text-slate-300 select-none"
+            >
+              Full investigation
+              <span class="text-slate-700 group-open:hidden">— show</span>
+            </summary>
+            <pre
+              class="mt-2 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-black/40 p-3 text-[11px] leading-relaxed text-slate-400"
+            >
+{{- r.veto_transcript -}}</pre
+            >
+          </details>
+          {% endif %} {% if r.veto_model or r.veto_mode %}
+          <p class="text-slate-700 text-[11px] font-mono">
+            {{ r.veto_model }}{% if r.veto_mode %} · {{ r.veto_mode }} mode{% endif
+            %}
+          </p>
+          {% endif %} {% if not r.veto_checked and not r.block_reason %}
+          <p class="text-slate-600 text-xs">No further detail recorded.</p>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if records | length >= limit %}
+<p class="text-slate-600 text-xs mt-4">
+  Showing the {{ limit }} most recent decisions.
+</p>
+{% endif %} {% endif %} {% endblock %}

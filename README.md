@@ -1,329 +1,518 @@
 # NSETradeAgents
 
-Multi-agent AI system for swing trading NSE smallcap and midcap stocks. Targets 1-4 week holds with ATR-based stops, a hybrid trailing stop for proven winners, and 18% take profit. Fully automated — morning discovery at 9:30 AM IST, 15-minute position monitoring during market hours.
+An automated swing-trading system for NSE smallcap and midcap stocks. It scans
+about 400 stocks every morning, screens and scores the setups, sizes positions,
+and manages exits — holding for one to four weeks.
+
+It runs in simulation mode against real market data. No real money.
+
+The trading logic is entirely deterministic. A single LLM agent — a **forensic
+veto** — runs alongside it in shadow mode, recording a verdict on every candidate
+without being allowed to block anything. The reasoning behind that split is in
+[Design decisions](#design-decisions).
 
 ---
 
-## Architecture
+## How it works
 
 ```
-NSE Universe (Smallcap 250 + Midcap 150 — 400 stocks)
+400 NSE stocks (Smallcap 250 + Midcap 150)
         ↓
-Regime Gate  (Nifty 50 vs SMA50 — skips all new entries if market in sustained downtrend)
+Breadth gate ───────────► skip the day if under half the universe is above its own 50-day average
         ↓
-Math Screener  (9 filters: SMA trend, RSI 55-70, ATR >1.5%, volume >2× on up day, momentum >2%, liquidity >₹2Cr)
+Screener (10 filters) ──► rank what survives by volume, momentum, and volatility
         ↓
-fetch_data_node  (yfinance — single batch download before parallel fan-out)
+For each candidate, run the LangGraph pipeline:
+
+  fetch_data ──► fundamental ──┬──► market_context ──┐
+                               └──► technical ───────┴──► risk ──► score ──► veto
         ↓
-Fundamental Check  (deterministic — market cap, D/E ratio, ROE, no LLM)
-        ↓  conditional: blocked if fails, else parallel fan-out
-        ├── Technical Agent    Claude Haiku  — 20 indicators, structured output, temperature=0
-        ├── Sentiment Agent    Claude Haiku  — ReAct loop → Tavily search → scoring, temperature=0
-        │     └── Research Agent  create_agent + Tavily — sector-aware autonomous search
-        └── Market Context     No LLM — Nifty 50 (day/5d/10d/20d trend, SMA20, India VIX), sector index, 52w position, divergence
-        ↓  fan-in
-Risk Agent       Deterministic — 4 hard gates + ATR-based position sizing (max 5 positions × 20%)
-        ↓  conditional routing
-Decision Agent   Claude Sonnet — 5-dimension rubric → labels → computed confidence score, temperature=0
-        ↓  conditional routing (≥68% confidence; ≥80% to unlock 5th high-conviction slot)
-Portfolio Simulator  SQLite — cash accounting, trailing stop management, realised + unrealised P&L
+Score 0–100. Buy at 65 or above. The veto records a verdict but does not block.
+        ↓
+Buy before the 15:30 close — the signal is a claim about today
+        ↓
+Decision record written for every candidate, bought or not
 ```
 
-**Single-process deployment:** FastAPI (async event loop) + APScheduler (BackgroundScheduler threads) run in one uvicorn process. The scheduler fires jobs in background threads; FastAPI serves the dashboard concurrently.
+Every stage can reject a candidate. Most do.
 
-```mermaid
-flowchart TD
-    A([NSE Universe\n400 stocks]) --> B[Regime Gate\nNifty 50 vs SMA50]
-    B -- market downtrend --> SKIP([Skip])
-    B --> C[Math Screener\n9 filters + ranking]
-    C --> D[fetch_data_node\nbatch download]
-    D --> E[Fundamental Check\ndeterministic]
-    E -- blocked --> BLK([Blocked])
-    E --> F[Technical Agent\nClaude Haiku]
-    E --> G[Sentiment Agent\nClaude Haiku + Tavily]
-    E --> H[Market Context\ndeterministic]
-    F --> I[Risk Gates\ndeterministic]
-    G --> I
-    H --> I
-    I -- blocked --> BLK
-    I --> J[Decision Agent\nClaude Sonnet]
-    J -- "HOLD / SELL or confidence < 68%" --> BLK
-    J -- "BUY ≥ 68%" --> K[Execute]
-    K --> L[(Portfolio Simulator\nSQLite)]
+### Daily schedule
 
-    style F fill:#7c3aed,color:#fff
-    style G fill:#7c3aed,color:#fff
-    style J fill:#7c3aed,color:#fff
-    style E fill:#1d4ed8,color:#fff
-    style H fill:#1d4ed8,color:#fff
-    style I fill:#1d4ed8,color:#fff
-    style B fill:#1d4ed8,color:#fff
-    style C fill:#1d4ed8,color:#fff
-    style D fill:#1d4ed8,color:#fff
-```
-*Purple = LLM nodes (Claude). Blue = deterministic.*
+| When (IST) | Job |
+|---|---|
+| 15:00 | Scan — screen, score, and open new positions before the 15:30 close |
+| every 15 min | Check open positions against stop and target (market hours only) |
+| 15:35 | Update trailing stops from the day's close |
+| 16:00 | Post-mortem — fill in what past decisions actually returned |
+
 ---
 
-## Tech Stack
+## Trading strategy
+
+### Universe
+Nifty Smallcap 250 + Midcap 150, fetched from NSE's published index lists.
+
+### Regime gate
+If fewer than 50% of the universe are trading above their own 50-day average, no
+new positions that day. Existing positions are unaffected.
+
+Breadth rather than an index, because the index is not what gets traded: Nifty 50
+rose 9.2% in 2025 while the median mid/smallcap fell 5.3%.
+
+### Screener — 10 filters, all must pass
+
+| Filter | Threshold | Purpose |
+|---|---|---|
+| Price > SMA50 > SMA200 | required | Uptrend on both short and long horizons |
+| RSI (14) | 55–70 | Moving, not yet overbought |
+| ATR% | > 1.5% | Enough daily range for the trade to be worth taking |
+| Volume ratio | > 2× 20-day average | Unusual volume implies institutional activity |
+| Day change | > 0.5% | High volume on a down day is distribution |
+| Day change | < 8% | Avoids chasing a move that has already run |
+| 5-day momentum | > 2% | Must actually be moving |
+| Volume | > 50,000 shares | Liquidity floor |
+| Traded value | > ₹2 crore/day | Enough turnover to enter and exit |
+| Price | > ₹100 | Excludes penny-stock behaviour |
+
+Survivors are ranked: 40% volume ratio, 35% 5-day momentum, 25% ATR%.
+
+### Fundamental check
+Rejects market cap under ₹500 crore, debt/equity above 2× (skipped for banks),
+and negative return on equity.
+
+### Scoring — four dimensions, 100 points
+
+| Dimension | Best | Middle | Worst |
+|---|---|---|---|
+| Entry timing | 30 | 18 | 0 |
+| Momentum quality | 25 | 15 | 0 |
+| Risk/reward | 20 | 12 | 0 |
+| Market regime | 25 | 15 | 0 |
+
+Every dimension is banded and additive; nothing subtracts. **Entry threshold: 65.**
+
+Market regime folds VIX, Nifty trend, and sector strength into one band. A stock
+rising while its sector falls counts as strength. Momentum quality is downgraded
+one band when entry timing is not ideal.
+
+### Exits
+
+`app/portfolio/exits.py` decides every exit, for both the live system and the
+backtest.
+
+Every level is scaled to the stock's own volatility, so a calm stock and a wild
+one are asked to do proportionally the same thing.
+
+| Exit | Trigger |
+|---|---|
+| Stop | `2.5 × ATR%` below entry, floor 5%, cap 10% |
+| Trailing stop | Arms at `2 × ATR%` gain, then trails `2 × ATR%` behind the peak (5–8%) |
+| Target | `4 × ATR%` above entry, floor 6%, cap 20% |
+| Timeout | 21 days |
+
+The trail must arm below the target or it never arms at all. Once armed, the
+target stays live — whichever level the price reaches first ends the trade.
+
+**Circuit breaker:** if the portfolio falls more than 8% from its 30-day peak,
+new entries pause until it recovers.
+
+**Position limits:** 5 concurrent positions, one per ticker.
+
+**Entry timing:** the scan runs at 15:00 and buys before the close, so a setup is
+evaluated and bought on the same day.
+
+---
+
+## The veto agent
+
+`app/agents/veto.py` — a ReAct agent (Claude Opus 5 + Tavily search) that runs on
+each candidate after it passes scoring. It is asked one question: *what
+specifically kills this trade?*
+
+It may only reject for one of five reasons, and every rejection must cite a
+checkable fact — a date, a filing, a named event.
+
+| Reason | Meaning |
+|---|---|
+| `EARNINGS_IMMINENT` | Results or board meeting within ~3 trading days |
+| `ADVERSE_NEWS` | Regulatory action, auditor resignation, guidance cut, downgrade, key departure |
+| `SUPPLY_OVERHANG` | Promoter selling or pledging, block deal, announced QIP/OFS |
+| `NEWS_ALREADY_PRICED` | The move being bought was itself the reaction to now-public news |
+| `PENDING_EVENT` | An unscheduled binary event is close |
+
+Anything else is a pass. Search is capped at 8 queries per candidate, with a
+LangGraph recursion limit as a backstop.
+
+**Modes** — `VETO_MODE` is `off`, `shadow`, or `acting`. Default is `shadow`:
+the verdict is recorded on the decision record and shown on the dashboard, but
+the trade proceeds regardless.
+
+**Failure behaviour** — any error returns a pass, with the error text stored in
+the record's `checked` field. The dashboard counts these separately, because a
+broken veto and a lenient one are otherwise indistinguishable.
+
+---
+
+## Measurement
+
+Every candidate the scan evaluates produces a `DecisionRecord` — bought or not —
+holding the score, the four bands, six indicators, the git commit, the block
+reason, and the veto's full verdict.
+
+The 16:00 post-mortem replays each decision through the same exit ladder the live
+system uses — entering at the decision day's close, exactly as live does — and
+fills in what it would have returned. Rejected candidates get graded alongside
+accepted ones.
+
+Outcomes are recorded both raw and as **alpha against the Nifty Smallcap 250**,
+because raw return misjudges whole years: in 2025 the system lost 4.2% while its
+universe lost 5.3%, which is a good year that looks like a bad one.
+
+The `/decisions` page shows all of this, plus:
+
+- **kill rate** and a breakdown of which reasons the vetoes are made of
+- **veto errors** — outage detection, since failures are recorded as passes
+- **veto edge** — mean outcome of killed candidates minus mean outcome of passed
+  ones. Negative means the veto is blocking trades that went on to do worse.
+
+---
+
+## Backtest results
+
+Four years of NSE daily data, ₹2,00,000 starting capital, entry threshold 65.
+
+| Metric | Value |
+|---|---|
+| Total return | +115.7% |
+| CAGR | +21.2% |
+| Sharpe ratio | 2.07 |
+| Max drawdown | 13.4% |
+| Total trades | 268 |
+| Win rate | 56.3% |
+| Profit factor | 1.89 |
+| Average hold | 15.6 days |
+
+**Exit distribution:** 65 stopped out · 114 timed out · 25 trailing stop · 64 target
+
+| Year | Return | Trades | Win% | PF | Max drawdown |
+|---|---|---|---|---|---|
+| 2022 | +25.9% | 53 | 43.4% | 1.84 | 13.4% |
+| 2023 | +47.5% | 74 | 71.6% | 4.17 | 4.8% |
+| 2024 | +20.1% | 84 | 63.1% | 2.11 | 5.6% |
+| 2025 | −4.2% | 57 | 38.6% | 0.78 | 8.3% |
+
+### Against buying the universe and holding it
+
+The honest benchmark, and the first thing worth knowing:
+
+| | Strategy | Equal-weight universe, buy & hold |
+|---|---|---|
+| Total return | +115.7% | **+181.7%** |
+| CAGR | +21.2% | **+29.6%** |
+| Max drawdown | **13.4%** | 25.8% |
+| Sharpe | **2.07** | 1.42 |
+
+**Buying all 400 stocks on day one and doing nothing beat this system by 66 percentage points.** Indian smallcaps had an exceptional four years; almost anything long made money.
+
+What the strategy did deliver is risk: a little over half the drawdown, and a materially better Sharpe, while holding at most five positions and sitting in cash whenever breadth is weak. That is a real result, but it is a *risk-adjusted* one — over this period the selection logic did not add return over its own universe.
+
+Both figures carry the same survivorship bias, so the comparison between them is fair even though neither is achievable.
+
+These numbers are optimistic. See [Known limitations](#known-limitations) for
+what is not modelled.
+
+**What the exit distribution shows:** 110 of 235 trades timed out — held three
+weeks and closed for roughly nothing. The stop sits about 2.5 daily ranges below
+entry while the target sits about 7 above, and three weeks of ordinary movement
+covers about 4.6. Noise reaches the stop easily and rarely reaches the target.
+Scaling the target to each stock's volatility, rather than a flat 18%, is the
+open fix.
+
+---
+
+## Design decisions
+
+### Trading logic is deterministic; the LLM only subtracts
+
+An earlier version had three Claude agents — technical reading, news sentiment,
+and a final buy decision. All three were removed.
+
+The decision agent scored setups across dimensions that Python had already
+computed, so it was re-deriving known values rather than adding information. The
+sentiment agent fed live scoring but was replaced by a constant in the backtest,
+which meant the backtest was not measuring the system that actually ran. Removing
+all three moved the backtest result by under one percent.
+
+The rule that replaced them: an LLM earns its place only where it brings
+information the code cannot compute — and it may only remove trades, never add
+them.
+
+### The veto asks what kills a trade, not whether it is good
+
+Asking a model to approve a setup the screener already selected produces
+agreement, not analysis. Asking it to find a specific disqualifying fact produces
+either a citation or a pass. The closed list of five reasons is enforced in code,
+not only in the prompt: a verdict citing anything else is downgraded to a pass.
+
+### Shadow mode before acting
+
+The veto records verdicts without blocking, so every trade becomes a labelled
+data point — including the ones the model wanted to stop. Its contribution can
+then be measured as a difference in outcomes rather than argued for.
+
+This matters because an LLM's contribution cannot be backtested here: there is no
+point-in-time news archive, and any model has already read the news from the test
+period. Forward validation is the only honest option.
+
+### The exit ladder is scaled to volatility, and it was measured
+
+An earlier ladder mixed units: the stop scaled with ATR while the target and the
+trail arming point were flat percentages. A 2%-ATR stock and a 5%-ATR stock were
+given stops proportional to their own movement and then asked to reach the same
+fixed 18%.
+
+Fixing it was not a matter of picking a multiplier. `3 × ATR` was tested first and
+lost badly (+53% against +82%); `4 × ATR` won. A 21% swing from one parameter is
+itself a warning that the strategy is sensitive to it, which is why the multiplier
+is pinned by a test rather than left to drift.
+
+The trail arming point had to move with the target. A flat 12% arming point sits
+*above* an ATR-scaled target on most stocks, so the trail would never arm.
+
+### Hybrid mode was removed, not disabled
+
+An earlier version removed the target and timeout from up to three winners so they
+could run indefinitely. It produced 80% of returns from ~28 long holds out of 232
+trades.
+
+It was deleted. A system earning from 250 ordinary trades degrades more gracefully
+than one depending on a handful of exceptional ones — and that handful is exactly
+where survivorship bias and overfitting concentrate, since the small illiquid names
+that ran for 40 days are the ones that survived to still be listed. Under the ATR
+ladder, turning it off was better outright (+85% against +74%).
+
+### Buy on the signal day, not the next morning
+
+The signal is a claim about today's action, so acting on it tomorrow means acting
+on a condition that has already begun resolving. Three measurements agreed: the
+median signal-close-to-next-open gap is **+0.47%**; that first night is worth
+**1.5×** a typical held night (+0.474% against +0.312%, at identical volatility);
+and the backtest improved on return, Sharpe and drawdown together.
+
+The cost is honesty. The backtest decides on a bar and fills at that same bar's
+close, which is a price it could not have known. Live closes most of the gap by
+scanning at 15:00 — when the filters are ~92% resolved — and buying before 15:30.
+The residual optimism is recorded under Known limitations.
+
+### No configuration flags for settled questions
+
+Every strategy question here was decided by measurement, and the losing branch was
+deleted rather than left behind a flag. Dead paths drift: they stop being
+exercised, stop being tested, and eventually stop working, while still looking
+like a supported option. Git history is the record of what was tried.
+
+### Everything fails open
+
+The regime gate, the veto, the holiday check, and the heartbeat write all
+degrade to "carry on" when they break. A silent halt is the worst failure mode
+for this system — a stopped scan produces no error and no trades, and looks
+identical to a quiet market.
+
+### Live and backtest share the same code
+
+`app/screener/filters.py` and `app/portfolio/exits.py` are called by both paths,
+so a change to trading rules cannot apply to one and not the other. Every
+extraction into these modules was verified by a byte-identical backtest output.
+
+### Rejected candidates are recorded, not discarded
+
+A system that only stores its trades can never learn what it was right to skip.
+Decision records plus the post-mortem make the "no" decisions gradeable, which is
+what turns the veto into a measurable experiment rather than a feature.
+
+### One process, one worker
+
+The scheduler runs inside the FastAPI lifespan, so a single `uvicorn` process
+serves the dashboard and drives the pipeline. Running multiple workers would
+start multiple schedulers and open duplicate positions.
+
+### SQLite locally, Postgres when deployed
+
+No raw SQL anywhere, so `DATABASE_URL` is the only thing that changes. SQLite is
+the right fit for one process writing a handful of rows a day; hosted Postgres is
+used when the data needs to outlive the server it runs on.
+
+### Health is a heartbeat, not a row count
+
+A quiet day writes no decision records, and so does a scheduler that never fired.
+`ScanRun` records that a scan happened, separately from what it found. `/health`
+serves it from memory and returns 503 once it goes stale, so an external monitor
+catches a stopped scheduler as well as a dead host — and polling never wakes a
+metered database.
+
+---
+
+## Tech stack
 
 | Layer | Technology |
 |---|---|
-| Agent orchestration | LangGraph — parallel fan-out, typed state, conditional routing |
-| LLM | Anthropic Claude — Haiku (specialist agents), Sonnet (final decision), all at temperature=0 |
-| Structured output | LangChain `with_structured_output` + Pydantic |
-| Agentic search | `langchain.agents.create_agent` ReAct loop + Tavily |
+| Pipeline orchestration | LangGraph — typed state, parallel fan-out, conditional routing |
+| Veto agent | LangChain `create_agent` (ReAct) + Claude Opus 5 + Tavily |
 | Market data | yfinance (NSE via Yahoo Finance) |
-| Scheduling | APScheduler `BackgroundScheduler` — NSE holiday-aware via official NSE API |
-| Database | SQLAlchemy 2.0 (`Mapped` annotations) + SQLite |
+| Scheduling | APScheduler, NSE holiday-aware via the official NSE API |
+| Database | SQLAlchemy 2.0 — SQLite or Postgres |
 | API | FastAPI + Jinja2 |
-| Frontend | Tailwind CSS + Chart.js + Alpine.js (all via CDN) |
+| Frontend | Tailwind + Chart.js + Alpine.js (CDN) |
 | Config | Pydantic Settings (`.env`) |
-| Logging | structlog — timestamped console + in-memory deque → SSE stream |
-| Observaability | LangSmith - LLM call tracing per-node latency, token usage |
-| CI | GitHub Actions - pytest on every push and pull request |
+| Logging | structlog — console plus an in-memory buffer streamed over SSE |
+| CI | GitHub Actions — pytest on every push |
 
 ---
 
-## Project Structure
+## Project structure
 
 ```
 app/
 ├── agents/
-│   ├── fundamental.py      # Deterministic: market cap, D/E, ROE pre-filter
-│   ├── market_context.py   # Nifty/sector/52w/SMA20/VIX — no LLM
-│   ├── technical.py        # 20 indicators + Claude Haiku
-│   ├── sentiment.py        # ReAct research agent + Tavily + Claude Haiku
-│   ├── risk.py             # Deterministic gates + ATR-based position sizing
-│   └── decision.py         # Claude Sonnet 5-dimension rubric decision
+│   ├── fundamental.py    # Market cap, debt/equity, ROE
+│   ├── market_context.py # Nifty, sector, VIX, 52-week position
+│   ├── technical.py      # Indicators → signal + strength
+│   ├── risk.py           # Position sizing and hard gates
+│   └── veto.py           # Forensic veto (ReAct + search)
 ├── screener/
-│   ├── universe.py         # Fetch NSE CSV universe
-│   └── filters.py          # Regime gate + 9 math filters + ranking score
-├── graph/
-│   ├── state.py            # LangGraph TypedDict state
-│   └── graph.py            # LangGraph pipeline + confidence computation
+│   ├── universe.py       # Fetch the NSE stock list
+│   └── filters.py        # evaluate_candidate() + regime_blocked()  ← shared
 ├── portfolio/
-│   └── simulator.py        # Cash, trades, trailing stop updates, P&L snapshots
-├── scheduler/
-│   └── scheduler.py        # APScheduler — morning scan + 15-min position review with hybrid trail logic
-├── api/
-│   └── routes.py           # FastAPI app + all routes
-├── templates/              # Jinja2 HTML templates
-│   ├── base.html
-│   ├── overview.html       # Portfolio value + P&L chart
-│   ├── positions.html      # Open trades, live prices, progress bar
-│   ├── history.html        # Closed trades + win rate stats
-│   └── logs.html           # Real-time SSE log stream
+│   ├── exits.py          # evaluate_exit() + update_trail()  ← shared
+│   ├── simulator.py      # Cash, trades, P&L, snapshots
+│   └── postmortem.py     # Grades past decisions against real outcomes
+├── graph/
+│   ├── state.py          # LangGraph typed state
+│   └── graph.py          # The pipeline
+├── backtest/
+│   ├── engine.py         # Day-by-day simulation
+│   ├── store.py          # Local OHLCV cache
+│   ├── ingest.py         # Downloads history into the cache
+│   └── report.py         # Results tables and charts
 ├── utils/
-│   ├── indicators.py       # RSI, MACD, BB, ATR, SMA, momentum
-│   ├── prompt_helpers.py   # Shared prompt formatting
-│   └── scoring.py          # Dimension score map + confidence computation
-└── core/
-    ├── config.py           # Pydantic settings
-    ├── database.py         # SQLAlchemy engine + session
-    └── logging.py          # structlog + in-memory log buffer
-main.py                     # One-off scan entry point
+│   ├── indicators.py     # RSI, MACD, Bollinger, ATR, SMA, momentum
+│   ├── market_data.py    # yfinance wrappers
+│   └── scoring.py        # The four scoring dimensions
+├── core/
+│   ├── config.py         # Settings
+│   ├── database.py       # Engine and session
+│   ├── health.py         # Last-scan state behind /health
+│   └── logging.py
+├── scheduler/scheduler.py
+├── api/routes.py
+└── templates/            # Dashboard pages
+main.py                   # One-off scan
+backtest.py               # Run a backtest
 ```
 
 ---
 
 ## Setup
 
-**Requirements:** Python 3.10+, Anthropic API key, Tavily API key.
+Requires Python 3.12.
 
 ```bash
 git clone <repo>
 cd NSETradeAgents
-python -m venv venv
-source venv/bin/activate
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env        # add ANTHROPIC_API_KEY and TAVILY_API_KEY
+cp .env.example .env      # add ANTHROPIC_API_KEY and TAVILY_API_KEY
 ```
 
-**Run the full app** (dashboard + scheduler):
+**Dashboard and scheduler:**
 ```bash
-caffeinate -i uvicorn app.api.routes:app --reload --reload-dir app
+uvicorn app.api.routes:app --reload --reload-dir app
 ```
-Open `http://localhost:8000`. The scheduler starts automatically with three jobs:
-- **09:30 IST Mon–Fri** — morning scan, runs the full pipeline against the universe
-- **Every 15 min (market hours)** — position review: checks live prices against stop, target, timeout, and intraday catastrophe stop
-- **15:35 IST Mon–Fri** — EOD trail review: updates trailing stops and peak prices from the day's closing price, activates hybrid mode for newly eligible positions
+Then open `http://localhost:8000`.
 
-**Run tests:**
-```bash
-pytest tests/ -v
-```
-
-| File | Tests | Coverage |
-|---|---|---|
-| `test_risk.py` | 6 | All 4 hard gates, position sizing math, boundary conditions |
-| `test_filters.py` | 6 | All 9 screener filters, ranking order, yfinance mocked |
-| `test_fundamental.py` | 7 | Market cap, D/E, ROE, sector exemptions, flags vs blocks |
-| `test_simulator.py` | 6 | Trade lifecycle, duplicate guard, cash check, P&L math |
-| `test_decision.py` | 16 | BUY/HOLD/SELL outputs, dimension labels, pre-scoring fields, action normalisation, error fallback, model override |
-| `test_scoring.py` | 34 | Dimension score map, all market context adjustments, overextension penalty, score clamping, stacking behaviour |
-| `test_routing.py` | 16 | Confidence threshold gates, high-conviction 5th slot, action gate, edge cases |
-
----
-
-**One-off scan** (testing only):
+**One-off scan:**
 ```bash
 python main.py
 ```
 
----
+**Backtest:**
+```bash
+python backtest.py                      # 2022–2025
+python backtest.py --start 2023-01-01   # custom range
+python backtest.py --compare-hybrid     # A/B the hybrid exit mode
+```
 
-## Trading Strategy
+The first run downloads roughly four years of daily data for 400 stocks into
+`backtest_data.db`; later runs reuse the cache.
 
-### Universe
-NSE Nifty Smallcap 250 + Midcap 150. Smallcap and midcap stocks offer higher volatility and momentum potential than large caps, making them better suited for 1-4 week swing trades.
+**Tests:**
+```bash
+pytest -q
+```
 
----
-
-### Stage 0 — Regime Gate
-
-Before running any candidates through the pipeline, the screener checks whether Nifty 50 is trading above its 50-day SMA. If below, all new entries are skipped for the day — existing positions continue to be monitored and closed normally.
-
-Backtesting showed correction periods (Jan 2025: 14/14 stops, Jul 2025: 7/7 stops) were almost entirely avoided by this gate, saving ~₹44,000 in losses over 3 years.
-
----
-
-### Stage 1 — Math Screener (9 filters)
-
-All 9 must pass. Candidates are then ranked by a composite score weighted 40% volume ratio, 35% 5-day momentum, 25% ATR%.
-
-| Filter | Threshold | Rationale |
-|---|---|---|
-| Price > SMA50 > SMA200 | Must be true | Confirms structural uptrend at medium and long-term timeframes. |
-| RSI (14) | 55 – 70 | Sweet spot for swing entry — confirmed momentum without being overbought. |
-| ATR% | > 1.5% | Ensures enough daily volatility to deliver meaningful returns in 1-4 weeks. |
-| Volume ratio | > 2× 20-day avg | Unusual volume signals institutional participation behind the move. |
-| Volume on up day | Day change > 0.5% | High volume on a down day is distribution, not accumulation. |
-| 5-day momentum | > 2% | Filters stocks that are technically sound but not actually moving. |
-| Volume shares | > 50,000 shares | Absolute liquidity floor to avoid illiquid micro-caps. |
-| Avg daily traded value | > ₹2 crore | Ensures enough daily turnover to enter and exit without slippage. |
-| Day change | < 8% | Avoids chasing stocks that have already made their primary move. |
+234 tests covering the screener, breadth gate, exit ladder, scoring, risk gates,
+fundamentals, indicators, the simulator, the backtest loop, the scan's control
+flow, the post-mortem,
+the veto (fully stubbed, no API calls), and the health endpoint.
 
 ---
 
-### Stage 2 — Fundamental Pre-Filter
+## Deployment
 
-Runs before expensive LLM agents. Rejects structurally broken companies.
+The whole system is one process. A single small VPS is enough.
 
-| Check | Threshold | Rationale |
-|---|---|---|
-| Market cap | > ₹500 crore | Below this: thin float, operator-driven price action, manipulation risk. |
-| Debt/Equity | < 2.0× (non-financial) | Skipped for banks/NBFCs where leverage is structural. |
-| Return on Equity | > 0% | Negative ROE stocks on technical setups are often dead-cat bounces. |
-| Revenue growth | Flag if < -10% YoY | Soft flag — not a hard block, but passed to the decision agent. |
-
----
-
-### Stage 3 — Parallel Agent Analysis
-
-Three agents run simultaneously after fundamental approval:
-
-**Technical Agent (Claude Haiku, temperature=0)**
-Interprets 20 computed indicators: RSI, MACD (line, signal, histogram trend), Bollinger Bands, SMA50/200, ATR%, volume ratio, 5-day and 20-day momentum, day change. Outputs BUY/HOLD/SELL signal with strength score and reasoning.
-
-**Sentiment Agent (Claude Haiku, temperature=0)**
-Two-step: (1) ReAct research agent autonomously generates sector-specific queries (pharma: USFDA approvals; banking: NPA trends, RBI policy) and searches Indian financial news. (2) Separate scoring agent evaluates findings on materiality, recency, and short-term relevance. Outputs BUY/HOLD/SELL with score (-100 to +100).
-
-**Market Context (no LLM)**
-Deterministic: Nifty 50 day/5d/10d/20d trend, SMA20 position (early correction detection), India VIX (fear gauge), sector index performance, 52-week position, and divergence note (stock rising while sector falls = relative strength).
-
----
-
-### Stage 4 — Risk Gates (Deterministic)
-
-Four non-negotiable hard blocks applied before the decision agent:
-
-1. **Max positions** — blocks if 5 positions already open (4 regular + 1 high-conviction)
-2. **Dual SELL signal** — blocks if both technical AND sentiment signal SELL simultaneously
-3. **Position affordability** — blocks if position would exceed budget or be below ₹5,000
-4. **Sector concentration** — blocks if 2 positions already open in the same sector
-
----
-
-### Stage 5 — Decision Agent (Claude Sonnet, temperature=0)
-
-Scores the setup across 5 independent dimensions and outputs a categorical label for each. Confidence is computed deterministically in Python — the model never outputs a number directly, eliminating LLM anchoring bias.
-
-**Pre-scoring:** Before evaluating dimensions, the model writes a `kill_case` (specific falsifiable failure reason), `strong_setup_conditions`, and `weak_setup_conditions`. This commits the model to concrete conditions before scoring.
-
-**Dimensions and point values:**
-
-| Dimension | Best | Mid | Worst |
-|---|---|---|---|
-| Signal alignment | 30 | 18 | 0 |
-| Entry timing | 25 | 15 | 0 |
-| Momentum quality | 20 | 12 | 0 |
-| Risk/reward view | 15 | 8 | 0 |
-| Setup concern | 10 | 5 | 0 |
-
-**Scoring adjustments** (deterministic, applied in `scoring.py`):
-- Bearish Nifty (>1% down): −15 pts
-- Bearish sector (>0.5% down): −10 pts
-- Relative strength vs sector: +10 pts
-- India VIX > 22: −20 pts | VIX > 18: −10 pts
-- Nifty 20d trend < −3%: −10 pts | 10d trend < −2%: −8 pts
-- Strong momentum + late entry (overextension): −15 pts
-
-**Confidence threshold:** ≥68 to execute on regular slots. ≥80 to unlock the 5th high-conviction slot.
-
----
-
-### Position Sizing & Risk Management
-
-**Entry:** ₹2,00,000 starting capital. 4 regular positions × 20% = ₹40,000 each. A 5th slot opens only when confidence ≥ 80 (high-conviction setup).
-
-**Stop loss:** ATR-based — `2.5 × ATR%` with a 5% floor and 10% cap.
-
-**Take profit:** 18% above entry price — applies until trailing stop activates.
-
-**Trailing stop & Hybrid mode:**
-Once a position rises +12% above entry, a trailing stop activates at `2 × ATR%` below the highest price seen (5% floor, 8% cap). For up to 3 positions simultaneously, the 21-day timeout and 18% target are also removed — the trailing stop becomes the only exit. This allows genuine momentum winners to run freely (NATIONALUM +75%, CHOICEIN +44%, RKFORGE +41%) while protecting gains on reversal.
-
-**Intraday catastrophe stop (hybrid positions only):** If a hybrid position's live price drops more than 15% below its recorded peak intraday — indicative of fraud, accident, or major news — the position exits immediately, bypassing the normal trailing stop logic.
-
-**Holding period:** 1-4 weeks for standard positions. Unlimited for hybrid-active positions — the trailing stop is the only exit once activated.
-
-**Circuit breaker:** If portfolio drops >8% from its 30-day peak (measured from snapshots), new entries pause until recovered. Existing positions continue normally.
-
----
-
-## Backtest Results
-
-Backtested against 3 years of live NSE data (Jan 2023 – Dec 2025) with ₹2,00,000 starting capital using claude-sonnet-4-6.
-
-| Metric | Value |
+| Piece | Choice |
 |---|---|
-| Total Return | +36.81% |
-| CAGR | 11.04% |
-| Max Drawdown | −10.46% |
-| Sharpe Ratio | 0.455 |
-| Calmar Ratio | 1.055 |
-| Total Trades | 85 |
-| Win Rate | 44.7% |
-| Profit Factor | 1.88× |
+| Host | One small instance, India region — NSE and Yahoo both throttle unfamiliar datacenter IPs |
+| Process | `uvicorn app.api.routes:app --workers 1` under systemd, no `--reload` |
+| Database | Hosted Postgres, so data survives the host |
+| TLS | Caddy in front, on a domain |
+| Monitoring | Any external uptime monitor pointed at `/health` |
+
+`WorkingDirectory` matters in the systemd unit: both the SQLite path and the
+`.env` lookup are relative. Keep `git` installed — decisions are stamped with the
+current commit.
+
+Verify outbound connectivity from the host before provisioning anything
+permanent: one `screen()` call proves both NSE's index CSVs and the yfinance
+batch download work from that IP.
 
 ---
 
-## Technical Highlights
+## Known limitations
 
-**Anchoring-free confidence scoring** — the decision agent outputs categorical labels rather than a single integer. A deterministic scoring map in `utils/scoring.py` converts labels to points and applies all market adjustments. This eliminates LLM anchoring to minimum-passing values, a known failure mode of single-number structured outputs validated across multiple backtests.
+Recorded deliberately — a backtest you cannot criticise is a backtest you cannot
+trust.
 
-**Hybrid trailing stop** — positions that prove themselves with a +12% move switch into hybrid mode: timeout removed, 18% cap removed, trailing stop is the only exit. Up to 3 positions can be hybrid simultaneously, ensuring at least 2 slots cycle normally and remain available for new entries.
-
-**VIX-aware scoring** — India VIX (`^INDIAVIX`) is fetched at scan time and passed through the scoring pipeline. Elevated fear (VIX > 18) reduces confidence deterministically, blocking momentum entries in high-fear environments regardless of individual stock quality.
-
-**yfinance 401 fix** — `fetch_data_node` downloads all ticker data once before the parallel fan-out. The three parallel agents read from LangGraph state instead of making independent HTTP calls.
-
-**Determinism by design** — all agents run at `temperature=0`. Consistent inputs produce consistent outputs, preventing borderline decisions from flipping between runs of the same day's data.
-
-**Single-process architecture** — `BackgroundScheduler` runs trading jobs in threads alongside FastAPI's event loop in one uvicorn process. No separate process or message broker needed.
-
-**Real-time log streaming** — structlog writes to an in-memory `deque(maxlen=500)`. The `/logs` SSE endpoint streams new entries to the browser via `EventSource`. No WebSocket or Redis needed.
-
-**Prompt caching** — the decision agent's system prompt (the full scoring rubric) is marked with `cache_control: ephemeral` and sent as a `SystemMessage` separate from the per-stock human message. Anthropic's prompt cache keeps the static rubric cached across the batch of candidates in each run, significantly reducing input token costs when evaluating many candidates in one session.
-
-**NSE holiday awareness** — official NSE holiday list fetched on first call and cached via `@lru_cache`. Position reviews skip cleanly on market holidays.
+1. **No trading costs or slippage** modelled. Across 235 round trips on
+   smallcaps, this is not a rounding error.
+2. **Survivorship bias** — the universe comes from today's index membership, so
+   delisted companies are absent.
+3. **No untouched holdout period** — thresholds were chosen while looking at the
+   full result.
+4. **Price history is split-adjusted retroactively**, a mild form of hindsight.
+5. **No sector data in the backtest**, so sector rules only apply live.
+6. **Fundamentals are current, not historical**, so that check runs live only.
+7. **The veto cannot be backtested** — no point-in-time news archive exists, and
+   any model has already read the news from the test period. It is validated
+   forward instead.
+8. **`safe_yf_download` has no retry** — a single rate-limit response on the
+   400-ticker batch ends that day's scan.
+9. **Buy-and-hold beat it.** Equal-weight holding the same universe returned
+   +181.7% against the strategy's +115.7%. The strategy's contribution over this
+   period was risk reduction, not return.
+10. **Trading costs are not in the engine.** Statutory NSE delivery charges are
+    0.26% per round trip and were estimated post-hoc; at 257 trades they consume
+    roughly a fifth of gross P&L before any slippage assumption.
+11. **The backtest fills at a price it could not have known.** A signal is decided
+    on a bar and filled at that bar's close. Live scans at 15:00 with ~92% of the
+    session's volume in and fills near 15:25, roughly 0.2–0.4% from the close.
+    Symmetric, but unquantified without intraday data.
+12. **Live under-reads volume at scan time.** At 15:00 only ~90–93% of the day's
+    volume has traded, so `volume_ratio` reads low and live takes fewer trades
+    than the backtest. Conservative, but the backtest overstates trade count.
+13. **The parameters have been fitted to this period.** The entry threshold, the
+    ATR multiplier and the breadth floor were all chosen or confirmed against the
+    same four years, across roughly twenty backtests. There is no untouched
+    holdout, so the live result should be expected to be worse.

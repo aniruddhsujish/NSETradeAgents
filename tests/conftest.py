@@ -4,7 +4,7 @@ from unittest.mock import patch
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from app.core.database import Base
-from app.models.models import Trade, PortfolioSnapshot  # noqa: F401
+from app.models import models  # noqa: F401  (registers tables on Base)
 
 
 @pytest.fixture
@@ -13,6 +13,22 @@ def db_session():
     Base.metadata.create_all(engine)
     with Session(engine) as session:
         yield session
+
+
+@pytest.fixture(autouse=True)
+def reset_health_state():
+    """Clear the cached last-scan time between tests.
+
+    app.core.health keeps it in module state so /health never queries, which
+    means it leaks across tests unless reset.
+    """
+    from app.core import health
+
+    health._last_scan = None
+    health._loaded = False
+    yield
+    health._last_scan = None
+    health._loaded = False
 
 
 @pytest.fixture

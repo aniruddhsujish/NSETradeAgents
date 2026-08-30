@@ -1,82 +1,20 @@
 from app.core.config import settings
 
 DIMENSION_SCORES = {
-    "signal_alignment": {"STRONG": 30, "ACCEPTABLE": 18, "CONFLICTED": 0},
-    "entry_timing": {"IDEAL": 25, "ACCEPTABLE": 15, "POOR": 0},
-    "momentum_quality": {"STRONG": 20, "MODERATE": 12, "WEAK": 0},
-    "risk_reward_view": {"FAVORABLE": 15, "NEUTRAL": 8, "UNFAVORABLE": 0},
-    "setup_concern": {"NONE": 10, "MINOR": 5, "SIGNIFICANT": 0},
+    "entry_timing": {"IDEAL": 30, "ACCEPTABLE": 18, "POOR": 0},
+    "momentum_quality": {"STRONG": 25, "MODERATE": 15, "WEAK": 0},
+    "risk_reward_view": {"FAVORABLE": 20, "NEUTRAL": 12, "UNFAVORABLE": 0},
+    "market_regime": {"FAVORABLE": 25, "NEUTRAL": 15, "HOSTILE": 0},
 }
 
 
-def compute_confidence(decision: dict, market_context: dict | None = None) -> int:
-    """Convert qualitative decision dimensions into an overall confidence score (0-100)"""
-    score = 0
-    score += DIMENSION_SCORES["signal_alignment"].get(
-        decision.get("signal_alignment") or "", 0
-    )
-    score += DIMENSION_SCORES["entry_timing"].get(decision.get("entry_timing") or "", 0)
-    score += DIMENSION_SCORES["momentum_quality"].get(
-        decision.get("momentum_quality") or "", 0
-    )
-    score += DIMENSION_SCORES["risk_reward_view"].get(
-        decision.get("risk_reward_view") or "", 0
-    )
-    score += DIMENSION_SCORES["setup_concern"].get(
-        decision.get("setup_concern") or "", 0
-    )
-
-    ctx = market_context or {}
-    nifty_day = ctx.get("nifty_day_pct", 0) or 0
-    sector_day = ctx.get("sector_day_pct", 0) or 0
-    divergence = ctx.get("divergence_note", "") or ""
-
-    if nifty_day < -1.0:
-        score -= 15
-    if sector_day < -0.5:
-        score -= 10
-    if "relative strength" in divergence.lower():
-        score += 10
-
-    if decision.get("momentum_quality") == "STRONG" and decision.get(
-        "entry_timing"
-    ) in (
-        "ACCEPTABLE",
-        "POOR",
-    ):  # blocks entering after the move is done
-        score -= 15
-
-    # India VIX fear adjustment
-    india_vix = ctx.get("india_vix") or 0
-    if india_vix > settings.vix_high_fear_level:
-        score -= settings.vix_high_fear_penalty
-    elif india_vix > settings.vix_medium_fear_level:
-        score -= settings.vix_medium_fear_penalty
-
-    # Nifty multi-day trend
-    nifty_10d = ctx.get("nifty_10d_pct", 0) or 0
-    nifty_20d = ctx.get("nifty_20d_pct", 0) or 0
-    if nifty_20d < settings.nifty_20d_decline_threshold:
-        score -= 10
-    if nifty_10d < settings.nifty_10d_decline_threshold:
-        score -= 8
-
-    return max(0, min(100, score))
-
-
-def _rules_signal_alignment(
-    tech_signal: str, sent_signal: str, sent_score: float
-) -> str:
-    if tech_signal != "BUY":
-        return "CONFLICTED"
-    if sent_signal == "BUY" and sent_score > 20:
-        return "STRONG"
-    if sent_score < -20:
-        return "CONFLICTED"
-    return "ACCEPTABLE"
-
-
 def _rules_entry_timing(ind: dict) -> str:
+    """Grade today as an entry point: IDEAL, ACCEPTABLE or POOR.
+
+    Any hard disqualifier (a large day move, thin volume, or price sitting on
+    a round number) forces POOR. Otherwise the band comes from how many of
+    the four ideal conditions hold.
+    """
     rsi = ind.get("rsi", 50)
     macd_hist = ind.get("macd_hist", 0)
     macd_hist_prev = ind.get("macd_hist_prev", 0)
@@ -89,7 +27,10 @@ def _rules_entry_timing(ind: dict) -> str:
     if volume_ratio < 1.5:
         return "POOR"
     for level in settings.round_number_levels:
-        if current_price > 0 and abs(current_price - level) / level < settings.resistance_proximity_pct:
+        if (
+            current_price > 0
+            and abs(current_price - level) / level < settings.resistance_proximity_pct
+        ):
             return "POOR"
 
     conditions = [
@@ -106,7 +47,12 @@ def _rules_entry_timing(ind: dict) -> str:
     return "POOR"
 
 
-def _rules_momentum_quality(ind: dict) -> str:
+def _rules_momentum_quality(ind: dict, entry_timing: str) -> str:
+    """Grade whether momentum is building or fading: STRONG, MODERATE or WEAK.
+
+    STRONG also requires an IDEAL entry: textbook momentum arrived at too
+    late is downgraded to MODERATE.
+    """
     rsi = ind.get("rsi", 50)
     macd_hist_trend = ind.get("macd_hist_trend", "mixed")
     momentum_5d = ind.get("momentum_5d", 0)
@@ -118,11 +64,15 @@ def _rules_momentum_quality(ind: dict) -> str:
     if momentum_5d > 10 or momentum_5d < 1:
         return "WEAK"
     if 62 <= rsi <= 67 and macd_hist_trend == "expanding" and 3 <= momentum_5d <= 8:
-        return "STRONG"
+        return "STRONG" if entry_timing == "IDEAL" else "MODERATE"
     return "MODERATE"
 
 
 def _rules_risk_reward(risk: dict, current_price: float) -> str:
+    """Grade reward against risk: FAVORABLE, NEUTRAL or UNFAVORABLE.
+
+    Falls back to NEUTRAL when the stop or target is missing or nonsensical.
+    """
     stop_loss = risk.get("stop_loss", 0)
     take_profit = risk.get("take_profit", 0)
     if not stop_loss or not take_profit or current_price <= stop_loss:
@@ -135,22 +85,64 @@ def _rules_risk_reward(risk: dict, current_price: float) -> str:
     return "UNFAVORABLE"
 
 
+def _rules_market_regime(market_context: dict | None) -> str:
+    """Grade the market backdrop: FAVORABLE, NEUTRAL or HOSTILE.
+
+    High VIX or a falling Nifty over 20 days is an outright disqualifier.
+    Otherwise the band comes from a count of softer warnings, where a stock
+    rising while its sector falls cancels the weak-sector warning and can
+    earn back the top band.
+    """
+    ctx = market_context or {}
+    india_vix = ctx.get("india_vix") or 0
+    nifty_day = ctx.get("nifty_day_pct") or 0
+    nifty_10d = ctx.get("nifty_10d_pct") or 0
+    nifty_20d = ctx.get("nifty_20d_pct") or 0
+    sector_day = ctx.get("sector_day_pct") or 0
+
+    relative_strength = (
+        "relative strength" in (ctx.get("divergence_note") or "").lower()
+    )
+
+    if india_vix > settings.vix_high_fear_level:
+        return "HOSTILE"
+    if nifty_20d < settings.nifty_20d_decline_threshold:
+        return "HOSTILE"
+
+    warnings = sum(
+        [
+            india_vix > settings.vix_medium_fear_level,
+            nifty_10d < settings.nifty_10d_decline_threshold,
+            nifty_day < -1.0,
+            sector_day < -0.5
+            and not relative_strength,  # A weak sector is not a warning for a stock that is beating it
+        ]
+    )
+
+    if warnings >= 3:
+        return "HOSTILE"
+    if warnings == 0 or (relative_strength and warnings == 1):
+        return "FAVORABLE"
+    return "NEUTRAL"
+
+
 def compute_rules_confidence(
-    technical: dict, sentiment: dict, risk: dict, market_context: dict | None = None
-) -> int:
+    technical: dict, risk: dict, market_context: dict | None = None
+) -> dict:
+    """Score a setup 0-100 across four banded dimensions.
+
+    Returns the score plus the band each dimension landed in, so callers can
+    record why a candidate scored what it did, not just what it scored"""
     ind = technical.get("indicators") or {}
     current_price = ind.get("current_price", 0)
 
-    rules_decision = {
-        "signal_alignment": _rules_signal_alignment(
-            technical.get("signal", "HOLD"),
-            sentiment.get("signal", "HOLD"),
-            sentiment.get("score", 0),
-        ),
-        "entry_timing": _rules_entry_timing(ind),
-        "momentum_quality": _rules_momentum_quality(ind),
+    entry_timing = _rules_entry_timing(ind)
+    bands = {
+        "entry_timing": entry_timing,
+        "momentum_quality": _rules_momentum_quality(ind, entry_timing),
         "risk_reward_view": _rules_risk_reward(risk, current_price),
-        "setup_concern": "MINOR",
+        "market_regime": _rules_market_regime(market_context),
     }
 
-    return compute_confidence(rules_decision, market_context)
+    score = sum(DIMENSION_SCORES[dim][band] for dim, band in bands.items())
+    return {"score": score, **bands}

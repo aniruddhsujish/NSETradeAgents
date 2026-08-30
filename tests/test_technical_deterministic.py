@@ -11,7 +11,6 @@ RSI_MAX = 70.0
 def patch_technical_settings(monkeypatch):
     monkeypatch.setattr("app.agents.technical.settings.rsi_min", RSI_MIN)
     monkeypatch.setattr("app.agents.technical.settings.rsi_max", RSI_MAX)
-    monkeypatch.setattr("app.agents.technical.settings.use_llm_technical", False)
 
 
 # ── _compute_signal ───────────────────────────────────────────────────────────

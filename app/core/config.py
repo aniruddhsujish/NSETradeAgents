@@ -3,16 +3,21 @@ from pydantic import Field
 
 
 class Settings(BaseSettings):
+    """All tunable parameters, with the values the backtest was measured on.
+
+    Any field can be overridden from .env. Defaults here are the source of
+    truth — .env.example deliberately does not repeat them.
+    """
+
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
     )
 
-    # LLM
-    anthropic_api_key: str
-    tavily_api_key: str
-    use_llm_technical: bool = False
-    llm_model_fast: str = "claude-haiku-4-5-20251001"
-    llm_model_smart: str = "claude-sonnet-4-6"
+    # LLM — unused while the pipeline is fully deterministic; the veto agent
+    # will need these again. Optional so the app starts without them.
+    anthropic_api_key: str | None = None
+    tavily_api_key: str | None = None
+    llm_model_veto: str = "claude-opus-5"
 
     # Portfolio
     starting_capital: float = 200000
@@ -21,19 +26,19 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "sqlite:///swing_bot.db"
 
-    # API
-    api_host: str = "0.0.0.0"
-    api_port: int = 8000
-
     # Risk
     max_positions: int = 5
     max_position_pct: float = 0.20
+    # Flat fallbacks, used only when a stock's ATR is unknown. Every level is
+    # otherwise scaled to volatility — see the exit ladder below.
     stop_loss_pct: float = 0.07
     take_profit_pct: float = 0.18
     max_hold_days: int = 21
-    min_confidence: float = 0.68
-    high_conviction_threshold: float = 0.80
-    rules_confidence_threshold: float = 50
+    rules_confidence_threshold: float = 65
+
+    # Regime gate: breadth of the traded universe, not an index. Nifty 50 rose
+    # 9.2% in 2025 while the median mid/smallcap fell 5.3%.
+    breadth_floor_pct: float = 50.0
 
     # Screener
     min_volume_ratio: float = 2.0
@@ -48,7 +53,7 @@ class Settings(BaseSettings):
 
     # Fundamental filters
     min_market_cap: float = 5_00_00_00_000  # ₹500 Crore
-    max_debt_to_equity: float = 200.0        # yfinance returns as %, 200 = 2.0x
+    max_debt_to_equity: float = 200.0  # yfinance returns as %, 200 = 2.0x
     min_roe: float = 0.05
     max_revenue_decline_pct: float = -0.10
     max_pe_ratio: float = 100.0
@@ -64,13 +69,26 @@ class Settings(BaseSettings):
     resistance_proximity_pct: float = 0.02
 
     # Trailing stop
-    trail_activation_pct: float = 0.12
+    trail_activation_pct: float = 0.12  # flat fallback when ATR is unknown
     trail_min_pct: float = 0.05  # floor for ATR-based trail
     trail_max_pct: float = 0.08  # cap for ATR-based trail
-    max_hybrid_positions: int = 3
-    trail_intraday_catastrophe_pct: float = (
-        0.15  # if price drops >15% intraday, bypass trail and exit immediately
-    )
+
+    # Exit ladder, in ATR multiples.
+    # The target sits at the median favourable excursion over a 21-day hold, so
+    # roughly half of trades reach it; the flat 18% was ~5.4x ATR and reached by
+    # 19%. The trail must arm below the target or it never arms at all.
+    stop_atr_mult: float = 2.5
+    target_atr_mult: float = 4.0
+    trail_arm_atr_mult: float = 2.0
+    # Bounded for the same reason the stop is: a 1.5% ATR stock would otherwise
+    # get a target tighter than its own stop.
+    target_min_pct: float = 0.06
+    target_max_pct: float = 0.20
+    trail_arm_min_pct: float = 0.04
+    trail_arm_max_pct: float = 0.12
+
+    # Veto config
+    veto_mode: str = "shadow"  # off | shadow | acting
 
 
 settings: Settings = Settings()

@@ -23,9 +23,9 @@ NSE_SOURCES = [
 
 
 def fetch_universe() -> list[str]:
-    """
-    Fetch the full smallcap + midca universe from NSE's official CSV files.
-    Returns a list of tickers in yfinance format e.g. ['TITAN.NS']
+    """Fetch the smallcap and midcap universe from NSE's published CSV lists.
+
+    Returns tickers in yfinance format, e.g. ['TITAN.NS'].
     """
     tickers: list[str] = []
 

@@ -3,15 +3,18 @@ import math
 from datetime import date
 
 from app.backtest.engine import ClosedTrade
+from app.core.config import settings
 
 
 def _cagr(start_val: float, end_val: float, years: float) -> float:
+    """Compound annual growth rate between two portfolio values."""
     if years <= 0 or start_val <= 0:
         return 0.0
     return (end_val / start_val) ** (1 / years) - 1
 
 
 def _sharpe(daily_returns: list[float]) -> float:
+    """Annualised Sharpe ratio from daily returns, assuming a zero risk-free rate."""
     n = len(daily_returns)
     if n < 2:
         return 0.0
@@ -22,6 +25,7 @@ def _sharpe(daily_returns: list[float]) -> float:
 
 
 def _max_drawdown(equity_curve: list[tuple[date, float]]) -> float:
+    """Largest peak-to-trough fall in the equity curve, as a percentage."""
     peak = 0.0
     max_dd = 0.0
     for _, val in equity_curve:
@@ -34,6 +38,7 @@ def _max_drawdown(equity_curve: list[tuple[date, float]]) -> float:
 
 def _yearly_breakdown(trades: list[ClosedTrade], equity_curve: list[tuple[date, float]]):
     # Build year → (first_equity, last_equity) from the curve
+    """Print per-year return, trade count, win rate, profit factor and drawdown."""
     year_equity: dict[int, tuple[float, float]] = {}
     for dt, val in equity_curve:
         y = dt.year
@@ -81,19 +86,43 @@ def _yearly_breakdown(trades: list[ClosedTrade], equity_curve: list[tuple[date, 
 
 
 def _score_analysis(trades: list[ClosedTrade], all_scores: list[int]):
-    dist_buckets = [(0, 49), (50, 59), (60, 69), (70, 79), (80, 100)]
-    outcome_buckets = [(50, 59), (60, 69), (70, 79), (80, 100)]
+    """Print how scores were distributed and how each score band performed.
+
+    Buckets are derived from the entry threshold rather than hardcoded, so
+    they stay meaningful when the threshold moves.
+    """
+    threshold = int(settings.rules_confidence_threshold)
+
+    # Buckets are derived, not hardcoded: the score scale and the entry
+    # threshold have both moved before, and literals silently went stale.
+    def _buckets(start: int) -> list[tuple[int, int]]:
+        """10-wide buckets from `start`, with the last one closing on 100.
+
+        A perfect score of 100 is reachable, so the top bucket must include it.
+        """
+        lows = list(range(start, 100, 10))
+        return [
+            (lo, lows[i + 1] - 1 if i + 1 < len(lows) else 100)
+            for i, lo in enumerate(lows)
+        ]
+
+    dist_buckets = _buckets(0)
+    outcome_buckets = _buckets(threshold)
 
     print()
     print("=" * 57)
     print("  SCORE DISTRIBUTION  (all signals that passed tech gate)")
+    print(f"  entry threshold = {threshold}  (marked ►)")
     print("=" * 57)
     total = len(all_scores)
     for lo, hi in dist_buckets:
         count = sum(1 for s in all_scores if lo <= s <= hi)
         bar = "█" * (count * 30 // max(total, 1))
-        label = f"{lo}-{hi:>3}"
-        print(f"  {label} : {bar:<30} {count:>5}  ({count/max(total,1)*100:.1f}%)")
+        mark = "►" if lo <= threshold <= hi else " "
+        label = f"{lo:>3}-{hi:>3}"
+        print(
+            f" {mark}{label} : {bar:<30} {count:>5}  ({count/max(total,1)*100:.1f}%)"
+        )
 
     print()
     print("=" * 57)
@@ -119,6 +148,11 @@ def print_report(
     all_scores: list[int] | None = None,
     csv_path: str = "backtest_trades.csv",
 ):
+    """Print the full backtest report and optionally write the trade log to CSV.
+
+    Covers headline metrics, the yearly breakdown, and the score analysis when
+    candidate scores are supplied.
+    """
     if not equity_curve:
         print("No equity curve - did not ingest run")
         return

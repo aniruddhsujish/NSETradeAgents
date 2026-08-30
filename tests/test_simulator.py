@@ -1,4 +1,3 @@
-import pytest
 from app.portfolio.simulator import PortfolioSimulator
 
 TRADE_RESULT = {
@@ -13,14 +12,13 @@ TRADE_RESULT = {
 }
 
 TECHNICAL = {"summary": "Bullish MACD crossover"}
-SENTIMENT = {"summary": "Positive news flow"}
 
 
 def test_open_trade(mock_db, monkeypatch):
     monkeypatch.setattr("app.portfolio.simulator.settings.starting_capital", 100000)
 
     sim = PortfolioSimulator()
-    trade = sim.open_trade(TRADE_RESULT, TECHNICAL, SENTIMENT)
+    trade = sim.open_trade(TRADE_RESULT, TECHNICAL)
 
     assert trade is not None
     assert trade.ticker == "TITAN.NS"
@@ -35,8 +33,8 @@ def test_open_trade_duplicate_blocked(mock_db, monkeypatch):
     monkeypatch.setattr("app.portfolio.simulator.settings.starting_capital", 100000)
 
     sim = PortfolioSimulator()
-    first = sim.open_trade(TRADE_RESULT, TECHNICAL, SENTIMENT)
-    second = sim.open_trade(TRADE_RESULT, TECHNICAL, SENTIMENT)
+    first = sim.open_trade(TRADE_RESULT, TECHNICAL)
+    second = sim.open_trade(TRADE_RESULT, TECHNICAL)
 
     assert first is not None
     assert second is None
@@ -46,7 +44,7 @@ def test_open_trade_insufficient_funds(mock_db, monkeypatch):
     monkeypatch.setattr("app.portfolio.simulator.settings.starting_capital", 10000)
 
     sim = PortfolioSimulator()
-    trade = sim.open_trade(TRADE_RESULT, TECHNICAL, SENTIMENT)
+    trade = sim.open_trade(TRADE_RESULT, TECHNICAL)
 
     assert trade is None
 
@@ -55,13 +53,13 @@ def test_close_trade(mock_db, monkeypatch):
     monkeypatch.setattr("app.portfolio.simulator.settings.starting_capital", 100000)
 
     sim = PortfolioSimulator()
-    sim.open_trade(TRADE_RESULT, TECHNICAL, SENTIMENT)
-    trade = sim.close_trade("TITAN.NS", 550.0, "tp")
+    sim.open_trade(TRADE_RESULT, TECHNICAL)
+    trade = sim.close_trade("TITAN.NS", 550.0, "target")
 
     assert trade is not None
     assert trade.status == "closed"
     assert trade.close_price == 550.0
-    assert trade.close_reason == "tp"
+    assert trade.close_reason == "target"
     assert trade.pnl == 2500.0  # (550 - 500) * 50 shares
     assert trade.pnl_pct == 10.0  # 10% gain
 
@@ -70,7 +68,7 @@ def test_close_trade_not_found(mock_db, monkeypatch):
     monkeypatch.setattr("app.portfolio.simulator.settings.starting_capital", 100000)
 
     sim = PortfolioSimulator()
-    trade = sim.close_trade("RELIANCE.NS", 550.0, "tp")
+    trade = sim.close_trade("RELIANCE.NS", 550.0, "target")
 
     assert trade is None
 
@@ -79,7 +77,7 @@ def test_save_snapshot(mock_db, monkeypatch):
     monkeypatch.setattr("app.portfolio.simulator.settings.starting_capital", 100000)
 
     sim = PortfolioSimulator()
-    sim.open_trade(TRADE_RESULT, TECHNICAL, SENTIMENT)
+    sim.open_trade(TRADE_RESULT, TECHNICAL)
     snapshot = sim.save_snapshot()
 
     assert snapshot is not None

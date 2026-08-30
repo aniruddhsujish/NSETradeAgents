@@ -1,4 +1,3 @@
-import pytest
 from app.agents.fundamental import run_fundamental_check
 
 GOOD_INFO = {

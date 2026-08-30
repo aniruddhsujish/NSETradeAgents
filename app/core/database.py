@@ -8,6 +8,8 @@ logger = structlog.get_logger()
 
 
 class Base(DeclarativeBase):
+    """Declarative base every model inherits from."""
+
     pass
 
 
@@ -16,6 +18,7 @@ engine = create_engine(
     connect_args=(
         {"check_same_thread": False} if "sqlite" in settings.database_url else {}
     ),
+    pool_pre_ping=True,  # hosted Postgres drops idle connections; test before use
     echo=False,
 )
 
@@ -24,6 +27,7 @@ SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
 @contextmanager
 def get_db():
+    """Session context manager that commits on success and rolls back on error."""
     db = SessionLocal()
     try:
         yield db
@@ -37,7 +41,9 @@ def get_db():
 
 
 def init_db():
-    from app.models.models import Trade, PortfolioSnapshot, WatchlistStock
+    # Importing the module registers every model on Base before create_all.
+    """Create any missing tables."""
+    from app.models import models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
     logger.info("database_initialised", url=settings.database_url)
