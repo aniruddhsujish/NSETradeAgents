@@ -93,7 +93,7 @@ def records(db):
 
 
 def test_scan_runs_end_to_end_and_writes_a_record(scan_env, monkeypatch):
-    monkeypatch.setattr(main, "screen", lambda t: [candidate("A.NS")])
+    monkeypatch.setattr(main, "screen", lambda t: ([candidate("A.NS")], True, 62.0))
     monkeypatch.setattr(main, "analyze_ticker", lambda **k: state(executed=True))
 
     main.run_scan()
@@ -112,7 +112,7 @@ def test_screen_is_called_with_tickers_only(scan_env, monkeypatch):
 
     def fake_screen(tickers):
         seen["tickers"] = tickers
-        return []
+        return [], True, 62.0
 
     monkeypatch.setattr(main, "screen", fake_screen)
     main.run_scan()
@@ -124,7 +124,7 @@ def test_screen_is_called_with_tickers_only(scan_env, monkeypatch):
 
 def test_blocked_candidate_still_gets_a_record(scan_env, monkeypatch):
     """The whole point of decision records: we keep the 'no' decisions."""
-    monkeypatch.setattr(main, "screen", lambda t: [candidate("A.NS")])
+    monkeypatch.setattr(main, "screen", lambda t: ([candidate("A.NS")], True, 62.0))
     monkeypatch.setattr(main, "analyze_ticker", lambda **k: state(executed=False))
 
     main.run_scan()
@@ -136,7 +136,7 @@ def test_blocked_candidate_still_gets_a_record(scan_env, monkeypatch):
 
 
 def test_record_captures_bands_and_indicators(scan_env, monkeypatch):
-    monkeypatch.setattr(main, "screen", lambda t: [candidate("A.NS")])
+    monkeypatch.setattr(main, "screen", lambda t: ([candidate("A.NS")], True, 62.0))
     monkeypatch.setattr(main, "analyze_ticker", lambda **k: state(executed=False))
 
     main.run_scan()
@@ -166,7 +166,7 @@ def test_the_verdict_and_its_provenance_are_recorded(scan_env, monkeypatch):
         "transcript": "[search] {\"query\": \"results date\"}",
         "model": "claude-opus-5",
     }
-    monkeypatch.setattr(main, "screen", lambda t: [candidate("A.NS")])
+    monkeypatch.setattr(main, "screen", lambda t: ([candidate("A.NS")], True, 62.0))
     monkeypatch.setattr(main, "analyze_ticker", lambda **k: s)
     monkeypatch.setattr(main.settings, "veto_mode", "shadow")
 
@@ -183,7 +183,7 @@ def test_the_verdict_and_its_provenance_are_recorded(scan_env, monkeypatch):
 def test_the_mode_is_recorded_even_when_the_veto_never_ran(scan_env, monkeypatch):
     """Why mode comes from settings, not the verdict: with VETO_MODE=off there
     is no verdict to read it from, and those rows must not look like passes."""
-    monkeypatch.setattr(main, "screen", lambda t: [candidate("A.NS")])
+    monkeypatch.setattr(main, "screen", lambda t: ([candidate("A.NS")], True, 62.0))
     monkeypatch.setattr(main, "analyze_ticker", lambda **k: state(executed=False))
     monkeypatch.setattr(main.settings, "veto_mode", "off")
 
@@ -198,13 +198,13 @@ def test_the_mode_is_recorded_even_when_the_veto_never_ran(scan_env, monkeypatch
 
 
 def test_no_candidates_writes_nothing(scan_env, monkeypatch):
-    monkeypatch.setattr(main, "screen", lambda t: [])
+    monkeypatch.setattr(main, "screen", lambda t: ([], True, 62.0))
     main.run_scan()
     assert records(scan_env) == []
 
 
 def test_circuit_breaker_stops_the_scan(scan_env, monkeypatch):
-    monkeypatch.setattr(main, "screen", lambda t: [candidate("A.NS")])
+    monkeypatch.setattr(main, "screen", lambda t: ([candidate("A.NS")], True, 62.0))
     monkeypatch.setattr(main.simulator, "is_circuit_breaker_active", lambda: True)
     monkeypatch.setattr(
         main, "analyze_ticker", lambda **k: pytest.fail("should not analyse")
@@ -215,7 +215,7 @@ def test_circuit_breaker_stops_the_scan(scan_env, monkeypatch):
 
 
 def test_stops_when_portfolio_is_full(scan_env, monkeypatch):
-    monkeypatch.setattr(main, "screen", lambda t: [candidate("A.NS")])
+    monkeypatch.setattr(main, "screen", lambda t: ([candidate("A.NS")], True, 62.0))
     monkeypatch.setattr(main.simulator, "get_portfolio_state", lambda: portfolio(5))
     monkeypatch.setattr(
         main, "analyze_ticker", lambda **k: pytest.fail("should not analyse")
@@ -227,7 +227,7 @@ def test_stops_when_portfolio_is_full(scan_env, monkeypatch):
 
 def test_skips_tickers_already_held(scan_env, monkeypatch):
     held = portfolio(1, [{"ticker": "A.NS", "sector": "IT"}])
-    monkeypatch.setattr(main, "screen", lambda t: [candidate("A.NS")])
+    monkeypatch.setattr(main, "screen", lambda t: ([candidate("A.NS")], True, 62.0))
     monkeypatch.setattr(main.simulator, "get_portfolio_state", lambda: held)
     monkeypatch.setattr(
         main, "analyze_ticker", lambda **k: pytest.fail("should not analyse")
@@ -249,7 +249,7 @@ def test_one_bad_ticker_does_not_stop_the_scan(scan_env, monkeypatch):
         return state(executed=False)
 
     monkeypatch.setattr(
-        main, "screen", lambda t: [candidate("A.NS"), candidate("B.NS")]
+        main, "screen", lambda t: ([candidate("A.NS"), candidate("B.NS")], True, 62.0)
     )
     monkeypatch.setattr(main, "analyze_ticker", flaky)
 
@@ -272,7 +272,7 @@ def test_scan_records_a_run_even_when_nothing_is_found(scan_env, monkeypatch):
     A quiet day writes no decisions, and so does a scheduler that never fired.
     Without this row the health check cannot tell them apart.
     """
-    monkeypatch.setattr(main, "screen", lambda t: [])
+    monkeypatch.setattr(main, "screen", lambda t: ([], True, 62.0))
 
     main.run_scan()
 
@@ -286,7 +286,7 @@ def test_scan_records_a_run_even_when_nothing_is_found(scan_env, monkeypatch):
 
 def test_scan_records_the_candidate_count(scan_env, monkeypatch):
     monkeypatch.setattr(
-        main, "screen", lambda t: [candidate("A.NS"), candidate("B.NS")]
+        main, "screen", lambda t: ([candidate("A.NS"), candidate("B.NS")], True, 62.0)
     )
     monkeypatch.setattr(main, "analyze_ticker", lambda **k: state(executed=False))
 
@@ -297,7 +297,7 @@ def test_scan_records_the_candidate_count(scan_env, monkeypatch):
 
 def test_circuit_breaker_still_records_a_run(scan_env, monkeypatch):
     """An early return is still a run — finally fires on the way out."""
-    monkeypatch.setattr(main, "screen", lambda t: [candidate("A.NS")])
+    monkeypatch.setattr(main, "screen", lambda t: ([candidate("A.NS")], True, 62.0))
     monkeypatch.setattr(main.simulator, "is_circuit_breaker_active", lambda: True)
 
     main.run_scan()
@@ -348,9 +348,130 @@ def test_a_broken_heartbeat_write_does_not_mask_the_real_error(monkeypatch):
 def test_the_heartbeat_is_reported_in_memory_too(scan_env, monkeypatch):
     """/health reads the cached value rather than querying, so the scan must
     push it — otherwise health stays stale until the process restarts."""
-    monkeypatch.setattr(main, "screen", lambda t: [])
+    monkeypatch.setattr(main, "screen", lambda t: ([], True, 62.0))
 
     main.run_scan()
 
     assert health._last_scan is not None
     assert health._loaded is True
+
+
+# ── a blocked regime still collects data ─────────────────────────────────────
+#
+# The gate stops execution, not observation. Breadth was shut on 40% of
+# sessions 2022-25 (57% in 2025) with closed streaks up to 74 sessions, so a
+# scan that records nothing on blocked days could gather no shadow data for
+# months.
+
+
+def test_a_blocked_regime_records_decisions_but_opens_nothing(scan_env, monkeypatch):
+    opened = []
+    monkeypatch.setattr(main, "screen", lambda t: ([candidate("A.NS")], False, 62.0))
+    monkeypatch.setattr(main, "analyze_ticker", lambda **k: state(executed=True))
+    monkeypatch.setattr(main.simulator, "open_trade", lambda **k: opened.append(k))
+
+    main.run_scan()
+
+    rows = records(scan_env)
+    assert len(rows) == 1, "the decision must still be recorded"
+    assert opened == [], "but no position may be opened"
+
+
+def test_a_blocked_regime_marks_the_reason_on_the_record(scan_env, monkeypatch):
+    """Without this you cannot tell later whether a skip was the score or the
+    regime — which is exactly what makes the gate measurable after the fact."""
+    monkeypatch.setattr(main, "screen", lambda t: ([candidate("A.NS")], False, 62.0))
+    monkeypatch.setattr(main, "analyze_ticker", lambda **k: state(executed=True))
+
+    main.run_scan()
+
+    row = records(scan_env)[0]
+    assert row.entered is False
+    assert row.block_reason.startswith("regime:")
+
+
+def test_a_score_block_keeps_its_own_reason_when_the_regime_is_shut(scan_env, monkeypatch):
+    """The regime reason only replaces the block reason for trades that would
+    otherwise have executed."""
+    monkeypatch.setattr(main, "screen", lambda t: ([candidate("A.NS")], False, 62.0))
+    monkeypatch.setattr(main, "analyze_ticker", lambda **k: state(executed=False))
+
+    main.run_scan()
+
+    assert records(scan_env)[0].block_reason == "score too low"
+
+
+def test_the_shadow_sample_is_capped_on_a_blocked_day(scan_env, monkeypatch):
+    """No position ever opens, so the max-positions break never fires. Without
+    a cap, 20 candidates would mean 20 veto calls on a day with no trades."""
+    many = [candidate(f"T{i}.NS") for i in range(20)]
+    monkeypatch.setattr(main, "screen", lambda t: (many, False, 62.0))
+    monkeypatch.setattr(main, "analyze_ticker", lambda **k: state(executed=False))
+    monkeypatch.setattr(main.settings, "max_positions", 5)
+
+    main.run_scan()
+
+    assert len(records(scan_env)) == 5
+
+
+def test_an_open_regime_is_not_capped_by_the_shadow_limit(scan_env, monkeypatch):
+    """On a normal day the position count does the limiting, and candidates
+    blocked on score must not consume the budget."""
+    many = [candidate(f"T{i}.NS") for i in range(20)]
+    monkeypatch.setattr(main, "screen", lambda t: (many, True, 62.0))
+    monkeypatch.setattr(main, "analyze_ticker", lambda **k: state(executed=False))
+
+    main.run_scan()
+
+    assert len(records(scan_env)) == 20
+
+
+def test_the_regime_state_is_recorded_on_every_decision(scan_env, monkeypatch):
+    """The gate only reaches block_reason for candidates that would otherwise
+    have executed. Without this column a score-blocked candidate looks the same
+    in an open and a shut market, and the gate can never be judged."""
+    monkeypatch.setattr(main, "screen", lambda t: ([candidate("A.NS")], False, 62.0))
+    monkeypatch.setattr(main, "analyze_ticker", lambda **k: state(executed=False))
+
+    main.run_scan()
+
+    row = records(scan_env)[0]
+    assert row.regime_open is False
+    assert row.block_reason == "score too low"  # the regime is not in here
+
+
+def test_an_open_regime_is_recorded_too(scan_env, monkeypatch):
+    monkeypatch.setattr(main, "screen", lambda t: ([candidate("A.NS")], True, 62.0))
+    monkeypatch.setattr(main, "analyze_ticker", lambda **k: state(executed=False))
+
+    main.run_scan()
+
+    assert records(scan_env)[0].regime_open is True
+
+
+def test_the_breadth_reading_is_recorded_not_just_the_verdict(scan_env, monkeypatch):
+    """Storing only regime_open would freeze the 50% floor permanently — the
+    raw reading is what lets the threshold be re-examined against outcomes."""
+    monkeypatch.setattr(main, "screen", lambda t: ([candidate("A.NS")], False, 43.7))
+    monkeypatch.setattr(main, "analyze_ticker", lambda **k: state(executed=False))
+
+    main.run_scan()
+
+    row = records(scan_env)[0]
+    assert row.breadth_pct == pytest.approx(43.7)
+    assert row.regime_open is False
+
+
+def test_the_market_context_inputs_are_recorded(scan_env, monkeypatch):
+    """market_regime is 25 of the 100 points and cannot rank candidates.
+    Recalibrating it later needs the values it was derived from, not the band."""
+    s = state(executed=False)
+    s["market_context"] = {"india_vix": 14.2, "nifty_20d_pct": -3.1}
+    monkeypatch.setattr(main, "screen", lambda t: ([candidate("A.NS")], True, 62.0))
+    monkeypatch.setattr(main, "analyze_ticker", lambda **k: s)
+
+    main.run_scan()
+
+    row = records(scan_env)[0]
+    assert row.india_vix == pytest.approx(14.2)
+    assert row.nifty_20d_pct == pytest.approx(-3.1)

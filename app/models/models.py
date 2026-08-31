@@ -100,9 +100,32 @@ class DecisionRecord(Base):
     momentum_5d: Mapped[Optional[float]] = mapped_column(nullable=True)
     day_change_pct: Mapped[Optional[float]] = mapped_column(nullable=True)
 
+    # what the market looked like that day. The inputs, not just the band they
+    # produced — market_regime is 25 of the 100 points and does not rank
+    # candidates, so recalibrating it later needs the raw values.
+    india_vix: Mapped[Optional[float]] = mapped_column(nullable=True)
+    nifty_20d_pct: Mapped[Optional[float]] = mapped_column(nullable=True)
+
     # what we did
     entered: Mapped[bool] = mapped_column(Boolean, default=False)
     block_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Whether the breadth gate was open when this decision was made. It only
+    # reaches block_reason for candidates that would otherwise have executed,
+    # so without this a score-blocked candidate looks identical in an open and
+    # a shut market — and the gate itself could never be judged from live data.
+    regime_open: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    # The raw breadth reading, not just the pass/fail. Storing only the boolean
+    # would freeze the 50% floor permanently; the float lets the threshold
+    # itself be re-examined against live outcomes.
+    breadth_pct: Mapped[Optional[float]] = mapped_column(nullable=True)
+
+    # Why the volume spiked — the screener buys spikes by construction, so this
+    # is the information it structurally lacks: earnings reaction, order win,
+    # index inclusion, block deal, sector move, or nothing identifiable.
+    # Unpopulated until the classifier is built; classifying a spike months
+    # later is far harder than doing it on the day.
+    catalyst: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    catalyst_fact: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # veto — null for candidates that never reached it
     veto_verdict: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)

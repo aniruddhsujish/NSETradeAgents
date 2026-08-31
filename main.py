@@ -46,7 +46,7 @@ def run_scan():
 
         tickers = fetch_universe()
 
-        candidates = screen(tickers)
+        candidates, regime_open, breadth = screen(tickers)
         candidates_found = len(candidates)
 
         if not candidates:
@@ -60,6 +60,10 @@ def run_scan():
 
         logger.info("scan_candidates_found", count=len(candidates))
 
+        portfolio = simulator.get_portfolio_state()
+        capacity = settings.max_positions - portfolio["open_positions"]
+        analyzed = 0
+
         for candidate in candidates:
             ticker = candidate["ticker"]
 
@@ -69,6 +73,13 @@ def run_scan():
                 logger.info(
                     "scan_max_positions_reached", open=portfolio["open_positions"]
                 )
+                break
+
+            # On a blocked day nothing opens, so the position-count break above
+            # never fires. Cap the shadow sample at what could have been traded,
+            # or a quiet market costs a veto call per candidate for nothing.
+            if not regime_open and analyzed >= capacity:
+                logger.info("scan_shadow_cap_reached", analyzed=analyzed)
                 break
 
             open_tickers = {position["ticker"] for position in portfolio["positions"]}
@@ -86,19 +97,25 @@ def run_scan():
                     open_positions=portfolio["open_positions"],
                     open_position_sectors=open_position_sectors,
                 )
+                analyzed += 1
             except Exception as e:
                 logger.error("scan_ticker_failed", ticker=ticker, error=str(e))
                 continue
 
             trade_result = final_state.get("trade_result") or {}
             executed = trade_result.get("executed", False)
+            entered = executed and regime_open
             rules_score = final_state.get("rules_score")
 
             block_reasons = trade_result.get("reasons")
             block_reason = ", ".join(block_reasons) if block_reasons else None
 
+            if executed and not regime_open:
+                block_reason = "regime: under half the universe above its 50d SMA"
+
             ind = (final_state.get("technical_signals") or {}).get("indicators") or {}
             bands = final_state.get("rules_bands") or {}
+            ctx = final_state.get("market_context") or {}
 
             veto = final_state.get("veto_result") or {}
 
@@ -119,8 +136,12 @@ def run_scan():
                         volume_ratio=ind.get("volume_ratio"),
                         momentum_5d=ind.get("momentum_5d"),
                         day_change_pct=ind.get("day_change_pct"),
-                        entered=executed,
+                        india_vix=ctx.get("india_vix"),
+                        nifty_20d_pct=ctx.get("nifty_20d_pct"),
+                        entered=entered,
                         block_reason=block_reason,
+                        regime_open=regime_open,
+                        breadth_pct=breadth,
                         veto_verdict=veto.get("verdict"),
                         veto_reason=veto.get("reason"),
                         veto_cited_fact=veto.get("cited_fact"),
@@ -131,7 +152,7 @@ def run_scan():
                         veto_mode=settings.veto_mode,
                     )
                 )
-            if executed:
+            if entered:
                 simulator.open_trade(
                     trade_result=trade_result,
                     technical=final_state.get("technical_signals") or {},
