@@ -3,7 +3,7 @@ from datetime import date, timedelta
 import pytest
 import pandas as pd
 from unittest.mock import patch
-from app.screener.filters import breadth_pct, regime_blocked_by_breadth, screen
+from app.screener.filters import breadth_pct, regime_open_at, screen
 
 SCREENER_SETTINGS = {
     "min_avg_daily_value": 20_000_000,
@@ -58,7 +58,7 @@ def make_fake_df(last_day: date | None = None):
 
 
 def test_empty_tickers_return_empty():
-    result = screen([])
+    result, _, _ = screen([])
     assert result == []
 
 
@@ -71,7 +71,7 @@ def test_passes_all_filters():
 
         mock_download.return_value = fake_df
 
-        result = screen(["TITAN.NS"])
+        result, _, _ = screen(["TITAN.NS"])
 
     assert len(result) == 1
     assert result[0]["ticker"] == "TITAN.NS"
@@ -91,7 +91,7 @@ def test_blocked_by_trend():
     ):
 
         mock_download.return_value = fake_df
-        result = screen(["TITAN.NS"])
+        result, _, _ = screen(["TITAN.NS"])
 
     assert result == []
 
@@ -105,7 +105,7 @@ def test_blocked_by_rsi_too_high():
     ):
 
         mock_download.return_value = fake_df
-        result = screen(["TITAN.NS"])
+        result, _, _ = screen(["TITAN.NS"])
 
     assert result == []
 
@@ -119,7 +119,7 @@ def test_blocked_by_low_volume():
     ):
 
         mock_download.return_value = fake_df
-        result = screen(["TITAN.NS"])
+        result, _, _ = screen(["TITAN.NS"])
 
     assert result == []
 
@@ -146,7 +146,7 @@ def test_ranking_order():
         mock_download.return_value = fake_df
         mock_indicators.side_effect = [high_score, low_score]
 
-        result = screen(["TITAN.NS", "RELIANCE.NS"])
+        result, _, _ = screen(["TITAN.NS", "RELIANCE.NS"])
 
     assert len(result) == 2
     assert result[0]["ticker"] == "TITAN.NS"  # Higher
@@ -200,23 +200,18 @@ def test_breadth_is_none_when_there_is_nothing_to_measure(empty):
 
 
 def test_gate_blocks_when_most_of_the_universe_is_below():
-    df = universe_frame({
-        "A": (100.0, 80.0), "B": (100.0, 80.0),
-        "C": (100.0, 80.0), "D": (100.0, 120.0),
-    })
-    assert regime_blocked_by_breadth(df) is True
+    assert regime_open_at(25.0) is False
 
 
 def test_gate_opens_at_exactly_the_floor():
-    """Comparison is `<`, so 50% is open, not blocked."""
-    df = universe_frame({"A": (100.0, 120.0), "B": (100.0, 80.0)})
-    assert regime_blocked_by_breadth(df) is False
+    """Comparison is `>=`, so 50% is open, not blocked."""
+    assert regime_open_at(50.0) is True
+    assert regime_open_at(49.9) is False
 
 
 def test_gate_fails_open_when_breadth_is_unknowable():
-    """Same contract as the index gate — a halted bot looks like a quiet market."""
-    assert regime_blocked_by_breadth(None) is False
-    assert regime_blocked_by_breadth(pd.DataFrame()) is False
+    """A halted bot looks exactly like a quiet market."""
+    assert regime_open_at(None) is True
 
 
 # ── staleness guard ───────────────────────────────────────────────────────────
@@ -231,7 +226,7 @@ def test_a_stale_last_bar_is_skipped():
         "app.screener.filters.compute_indicators", return_value=GOOD_INDICATORS
     ):
         dl.return_value = stale
-        result = screen(["TITAN.NS"])
+        result, _, _ = screen(["TITAN.NS"])
 
     assert result == []
 
@@ -242,6 +237,39 @@ def test_todays_bar_is_screened_normally():
         "app.screener.filters.compute_indicators", return_value=GOOD_INDICATORS
     ):
         dl.return_value = make_fake_df()
-        result = screen(["TITAN.NS"])
+        result, _, _ = screen(["TITAN.NS"])
 
     assert len(result) == 1
+
+
+def test_candidates_come_back_even_when_the_regime_is_shut():
+    """The gate stops execution, not observation — a blocked day must still
+    produce candidates or the veto experiment stalls through a downtrend."""
+    with patch("app.screener.filters.safe_yf_download") as dl, patch(
+        "app.screener.filters.compute_indicators", return_value=GOOD_INDICATORS
+    ), patch("app.screener.filters.breadth_pct", return_value=30.0):
+        dl.return_value = make_fake_df()
+        candidates, regime_open, _ = screen(["TITAN.NS"])
+
+    assert regime_open is False
+    assert len(candidates) == 1
+
+
+def test_the_regime_defaults_to_open_when_the_check_itself_fails():
+    """Fails open like every other gate: a broken breadth calculation must not
+    silently halt trading."""
+    with patch("app.screener.filters.safe_yf_download") as dl, patch(
+        "app.screener.filters.compute_indicators", return_value=GOOD_INDICATORS
+    ), patch("app.screener.filters.breadth_pct", side_effect=RuntimeError("boom")):
+        dl.return_value = make_fake_df()
+        _, regime_open, _ = screen(["TITAN.NS"])
+
+    assert regime_open is True
+
+
+def test_an_empty_universe_still_returns_a_pair():
+    """fetch_universe returns [] when NSE blocks us — the caller unpacks two
+    values and would crash on a bare list."""
+    candidates, regime_open, _ = screen([])
+    assert candidates == []
+    assert regime_open is True

@@ -79,45 +79,56 @@ def breadth_pct(closes: pd.DataFrame | None) -> float | None:
         return None
 
 
-def regime_blocked_by_breadth(closes: pd.DataFrame | None) -> bool:
-    """True when most of the universe sits below its own moving average.
+def regime_open_at(breadth: float | None) -> bool:
+    """Whether new entries are allowed at a given breadth reading.
 
-    Fails open like the index gate: a silently halted bot looks exactly like a
-    quiet market.
+    Takes the reading rather than the frame so the caller can record it — a
+    decision that stores only the pass/fail freezes the current floor forever.
+    Fails open on an unknown reading: a silently halted bot looks exactly like
+    a quiet market.
     """
-    b = breadth_pct(closes)
-    return False if b is None else b < settings.breadth_floor_pct
+    return breadth is None or breadth >= settings.breadth_floor_pct
 
 
-def screen(tickers: list[str]) -> list[dict]:
-    """Run the full universe through the regime gate and the screener filters.
+def screen(tickers: list[str]) -> tuple[list[dict], bool, float | None]:
+    """Run the full universe through the screener filters.
 
     Downloads every ticker in one batch, then applies `evaluate_candidate` to
-    each. Returns survivors sorted best-first by ranking score, or an empty
-    list if the regime gate is closed.
+    each. Returns (candidates sorted best-first, regime_open, breadth_pct).
+
+    The raw breadth reading comes back alongside the verdict so decisions can
+    record it — storing only the pass/fail would freeze the current floor.
+
+    Candidates come back regardless of the regime — the gate stops execution,
+    not observation. Recording decisions on blocked days is what lets the veto
+    experiment accumulate through a downtrend, and what makes the gate itself
+    measurable after the fact.
     """
     logger.info("screener_start", total=len(tickers))
 
     if not tickers:
         logger.warning("screener_empty_universe")
-        return []
+        return [], True, None
 
     # Download all tickers in one batch
     raw = safe_yf_download(tickers, period="12mo", group_by="ticker")
 
     # The regime gate runs after the download because breadth is measured on
-    # the universe itself, which this batch already contains.
+    # the universe itself, which this batch already contains. Defaults to open
+    # so a failure here never silently halts trading.
+    regime_open, breadth = True, None
     try:
         try:
             closes = raw.xs("Close", axis=1, level=1)
         except Exception:
             closes = None
-        if regime_blocked_by_breadth(closes):
+        breadth = breadth_pct(closes)
+        regime_open = regime_open_at(breadth)
+        if not regime_open:
             logger.info(
                 "screener_regime_blocked",
                 reason="under half the universe above its 50d SMA",
             )
-            return []
     except Exception as e:
         logger.warning("regime_check_failed", error=str(e))
 
@@ -187,4 +198,4 @@ def screen(tickers: list[str]) -> list[dict]:
             reason="today's bar missing for most of the universe",
         )
 
-    return candidates
+    return candidates, regime_open, breadth
