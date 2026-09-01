@@ -1,10 +1,12 @@
 # NSETradeAgents
 
 An automated swing-trading system for NSE smallcap and midcap stocks. It scans
-about 400 stocks every morning, screens and scores the setups, sizes positions,
-and manages exits — holding for one to four weeks.
+about 400 stocks late in each session, screens and scores the setups, sizes
+positions, and manages exits — holding for one to four weeks.
 
-It runs in simulation mode against real market data. No real money.
+**Live since 1 September 2026**, running unattended on a single ARM instance in
+Mumbai with a public dashboard. It trades in simulation against real market
+data — no real money.
 
 The trading logic is entirely deterministic. A single LLM agent — a **forensic
 veto** — runs alongside it in shadow mode, recording a verdict on every candidate
@@ -146,6 +148,12 @@ LangGraph recursion limit as a backstop.
 **Modes** — `VETO_MODE` is `off`, `shadow`, or `acting`. Default is `shadow`:
 the verdict is recorded on the decision record and shown on the dashboard, but
 the trade proceeds regardless.
+
+**Pre-registered switch condition** — move to `acting` only once there are at
+least **30 KILLs with filled outcomes** and a veto edge below **−4%**. Fixed in
+advance so the threshold cannot drift once the numbers are in; outcomes are
+noisy enough (σ ≈ 10%) that a smaller edge is not detectable at this sample
+size, and a smaller sample cannot separate signal from luck either way.
 
 **Failure behaviour** — any error returns a pass, with the error text stored in
 the record's `checked` field. The dashboard counts these separately, because a
@@ -360,7 +368,8 @@ metered database.
 | Veto agent | LangChain `create_agent` (ReAct) + Claude Opus 5 + Tavily |
 | Market data | yfinance (NSE via Yahoo Finance) |
 | Scheduling | APScheduler, NSE holiday-aware via the official NSE API |
-| Database | SQLAlchemy 2.0 — SQLite or Postgres |
+| Database | SQLAlchemy 2.0 — Postgres in production, SQLite locally |
+| Hosting | Oracle Cloud (Ampere ARM), Caddy, systemd, Neon Postgres |
 | API | FastAPI + Jinja2 |
 | Frontend | Tailwind + Chart.js + Alpine.js (CDN) |
 | Config | Pydantic Settings (`.env`) |
@@ -406,6 +415,8 @@ app/
 ├── scheduler/scheduler.py
 ├── api/routes.py
 └── templates/            # Dashboard pages
+scripts/
+└── connectivity_test.py  # Run on a host before provisioning it
 main.py                   # One-off scan
 backtest.py               # Run a backtest
 ```
@@ -460,23 +471,53 @@ the veto (fully stubbed, no API calls), and the health endpoint.
 
 ## Deployment
 
-The whole system is one process. A single small VPS is enough.
+Live since 1 September 2026. The whole system is one process — `uvicorn` serves
+the dashboard *and* runs the scheduler, so starting the web server is starting
+the trading system.
 
-| Piece | Choice |
-|---|---|
-| Host | One small instance, India region — NSE and Yahoo both throttle unfamiliar datacenter IPs |
-| Process | `uvicorn app.api.routes:app --workers 1` under systemd, no `--reload` |
-| Database | Hosted Postgres, so data survives the host |
-| TLS | Caddy in front, on a domain |
-| Monitoring | Any external uptime monitor pointed at `/health` |
+```
+        https://<host>
+              │
+              ▼
+  ┌──────────────────────────────────────────┐
+  │  Oracle Cloud Always Free  ·  Mumbai     │
+  │  Ampere A1, 1 OCPU / 6 GB, Ubuntu 24.04  │
+  │                                          │
+  │   Caddy :443 ──── TLS, auto-renewed      │
+  │     │                                    │
+  │     ▼  reverse proxy → 127.0.0.1:8000    │
+  │                                          │
+  │   uvicorn  (one process, one worker)     │
+  │     ├── FastAPI ──► dashboard + /health  │
+  │     └── APScheduler ──► the daily jobs   │
+  └──────────────────────────────────────────┘
+              │ outbound
+              ▼
+   Neon Postgres (Singapore) · Anthropic · Tavily · NSE · Yahoo
+```
 
-`WorkingDirectory` matters in the systemd unit: both the SQLite path and the
-`.env` lookup are relative. Keep `git` installed — decisions are stamped with the
-current commit.
+| Piece | Choice | Why |
+|---|---|---|
+| Host | Oracle Always Free, **Mumbai** | NSE and Yahoo both throttle unfamiliar datacenter IPs; an Indian region avoids the question |
+| Shape | Ampere A1, 1 OCPU / 6 GB | ARM; the workload is network-bound, so one core is ample |
+| Database | Neon Postgres, Singapore | data outlives the host — the box is disposable, the record is not |
+| TLS | Caddy + a free subdomain | fetches and renews Let's Encrypt certificates automatically |
+| Monitoring | external uptime check on `/health` | a dead host returns nothing at all, which no self-hosted check can report |
 
-Verify outbound connectivity from the host before provisioning anything
-permanent: one `screen()` call proves both NSE's index CSVs and the yfinance
-batch download work from that IP.
+### Before provisioning anything permanent
+
+Run `scripts/connectivity_test.py` on the target host. It proves NSE's index
+CSVs and the 400-ticker yfinance batch both work from that IP, which is the one
+thing that can invalidate the whole approach. `safe_yf_download` has no retry, so
+a single refusal ends a day's scan.
+
+### Free-tier specifics
+
+Oracle reclaims **idle** Always Free instances, and a 10-minute daily scan sits
+well inside their definition of idle. The account is therefore on Pay As You Go,
+which exempts it while still billing nothing inside the free allowance. The home
+region is permanent and Always Free compute exists only there, so it has to be
+chosen correctly at signup.
 
 ---
 
