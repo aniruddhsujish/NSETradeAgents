@@ -134,3 +134,19 @@ def test_note_scan_run_updates_without_touching_the_database(health_db):
         assert client.get("/health").json()["status"] == "ok"
 
     assert spy.call_count == 0
+
+
+def test_head_is_accepted(health_db):
+    """Uptime services default to HEAD, and FastAPI does not add it alongside
+    GET the way plain Starlette routes do — without it the monitor sees 405 and
+    reports the site down while it is perfectly healthy."""
+    scanned(health_db, hours_ago=1)
+
+    assert client.head("/health").status_code == 200
+
+
+def test_head_reports_staleness_too(health_db):
+    """The status code is all a HEAD request carries, so it has to be right."""
+    scanned(health_db, hours_ago=health.MAX_SCAN_AGE_HOURS + 1)
+
+    assert client.head("/health").status_code == 503

@@ -328,12 +328,16 @@ def api_snapshots():
         ]
 
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 def health():
     """Liveness for an external monitor, as JSON plus a meaningful status code.
 
     Returns 503 once the scan has gone stale rather than 200 with a flag, so a
     plain uptime monitor catches a stopped scheduler as well as a dead host.
+
+    HEAD is accepted because uptime services default to it, and FastAPI does not
+    add it alongside GET the way plain Starlette routes do — without this the
+    monitor sees 405 and reports the site down.
     """
     last = last_scan_at()
 
