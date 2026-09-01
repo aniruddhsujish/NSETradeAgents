@@ -158,7 +158,6 @@ def run_scan():
                     technical=final_state.get("technical_signals") or {},
                 )
 
-        simulator.save_snapshot()
         logger.info("scan_complete")
     except Exception as e:
         error = str(e)
@@ -179,6 +178,15 @@ def run_scan():
                 )
         except Exception as e:
             logger.error("scan_run_record_failed", error=str(e))
+
+        # A portfolio snapshot every scan, whatever the outcome. This used to
+        # sit after the candidate loop, so a quiet or blocked day recorded
+        # nothing — leaving the equity curve with holes on exactly the days the
+        # portfolio was flat, and the dashboard blank until the first trade.
+        try:
+            simulator.save_snapshot()
+        except Exception as e:
+            logger.error("snapshot_failed", error=str(e))
 
 
 if __name__ == "__main__":

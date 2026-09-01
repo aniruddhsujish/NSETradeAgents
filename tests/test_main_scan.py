@@ -475,3 +475,62 @@ def test_the_market_context_inputs_are_recorded(scan_env, monkeypatch):
     row = records(scan_env)[0]
     assert row.india_vix == pytest.approx(14.2)
     assert row.nifty_20d_pct == pytest.approx(-3.1)
+
+
+# ── the daily snapshot ───────────────────────────────────────────────────────
+
+
+def test_a_snapshot_is_saved_even_when_nothing_is_found(scan_env, monkeypatch):
+    """The equity curve must not have holes on flat days. This used to sit
+    after the candidate loop, so a quiet or blocked market recorded nothing and
+    the dashboard stayed blank until the first trade."""
+    saved = []
+    monkeypatch.setattr(main, "screen", lambda t: ([], True, 62.0))
+    monkeypatch.setattr(main.simulator, "save_snapshot", lambda *a, **k: saved.append(1))
+
+    main.run_scan()
+
+    assert saved == [1]
+
+
+def test_a_snapshot_is_saved_when_the_circuit_breaker_fires(scan_env, monkeypatch):
+    saved = []
+    monkeypatch.setattr(main, "screen", lambda t: ([candidate("A.NS")], True, 62.0))
+    monkeypatch.setattr(main.simulator, "is_circuit_breaker_active", lambda: True)
+    monkeypatch.setattr(main.simulator, "save_snapshot", lambda *a, **k: saved.append(1))
+
+    main.run_scan()
+
+    assert saved == [1]
+
+
+def test_a_snapshot_is_saved_even_when_the_scan_crashes(scan_env, monkeypatch):
+    saved = []
+
+    def boom(tickers):
+        raise RuntimeError("universe fetch died")
+
+    monkeypatch.setattr(main, "screen", boom)
+    monkeypatch.setattr(main.simulator, "save_snapshot", lambda *a, **k: saved.append(1))
+
+    with pytest.raises(RuntimeError):
+        main.run_scan()
+
+    assert saved == [1]
+
+
+def test_a_failing_snapshot_does_not_mask_the_real_error(scan_env, monkeypatch):
+    """Raised from inside finally, it would replace the exception on its way
+    out — same trap as the heartbeat write."""
+
+    def boom(tickers):
+        raise ValueError("the real problem")
+
+    monkeypatch.setattr(main, "screen", boom)
+    monkeypatch.setattr(
+        main.simulator, "save_snapshot",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("db down")),
+    )
+
+    with pytest.raises(ValueError, match="the real problem"):
+        main.run_scan()
