@@ -12,7 +12,7 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api.routes import app
@@ -150,3 +150,66 @@ def test_head_reports_staleness_too(health_db):
     scanned(health_db, hours_ago=health.MAX_SCAN_AGE_HOURS + 1)
 
     assert client.head("/health").status_code == 503
+
+
+# ── session lifecycle ────────────────────────────────────────────────────────
+#
+# The fixture above yields a session that is never committed or closed, which is
+# more permissive than the real get_db. That gap hid a DetachedInstanceError in
+# production: get_db commits on exit, which expires the instance, so reading an
+# attribute afterwards triggers a lazy reload on a detached object.
+
+
+@pytest.fixture
+def realistic_db(monkeypatch):
+    """A get_db that commits and closes on exit, exactly like the real one."""
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    Session_ = sessionmaker(bind=engine)
+
+    with Session_() as seed:
+        seed.add(ScanRun(ran_at=utcnow() - timedelta(hours=1)))
+        seed.commit()
+
+    @contextmanager
+    def _get_db():
+        db = Session_()
+        try:
+            yield db
+            db.commit()
+        finally:
+            db.close()
+
+    monkeypatch.setattr(health, "get_db", _get_db)
+
+
+def test_the_cold_read_survives_the_session_closing(realistic_db):
+    """Regression: a fresh process with an existing ScanRun row used to 500.
+
+    The attribute was read after the `with get_db()` block had committed and
+    closed, detaching the instance. Only reproducible with a session that
+    actually closes.
+    """
+    assert health.last_scan_at() is not None
+    assert client.get("/health").status_code == 200
+
+
+def test_a_database_failure_degrades_rather_than_500s(monkeypatch):
+    """A health endpoint that raises is useless in the one situation it exists
+    to report on."""
+
+    @contextmanager
+    def dead_db():
+        raise RuntimeError("connection refused")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(health, "get_db", dead_db)
+
+    r = client.get("/health")
+
+    assert r.status_code == 503
+    assert r.json()["status"] == "never_ran"

@@ -266,9 +266,9 @@ def create_scheduler() -> BackgroundScheduler:
 
     logger.info(
         "scheduler_ready",
-        morning_scan="09:30 IST Mon-Fri",
-        review_position="Every 15 mins",
-        trail_eod="15:35 IST Mon-Fri",
+        jobs=[
+            f"{j.name}: {j.trigger}" for j in sched.get_jobs()
+        ],
     )
 
     return sched
