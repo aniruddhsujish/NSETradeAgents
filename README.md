@@ -4,9 +4,13 @@ An automated swing-trading system for NSE smallcap and midcap stocks. It scans
 about 400 stocks late in each session, screens and scores the setups, sizes
 positions, and manages exits — holding for one to four weeks.
 
-**Live since 1 September 2026**, running unattended on a single ARM instance in
-Mumbai with a public dashboard. It trades in simulation against real market
-data — no real money.
+**Live since 1 September 2026** — running unattended on a single ARM instance in
+Mumbai. It trades in simulation against real market data; no real money.
+
+**Dashboard: [nsetradeagents.duckdns.org](https://nsetradeagents.duckdns.org)** —
+the [decisions page](https://nsetradeagents.duckdns.org/decisions) is the
+interesting one: every candidate evaluated, bought or not, with the veto's
+verdict and the fact it cited.
 
 The trading logic is entirely deterministic. A single LLM agent — a **forensic
 veto** — runs alongside it in shadow mode, recording a verdict on every candidate

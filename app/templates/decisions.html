@@ -118,7 +118,7 @@ content %}
         <th class="text-left px-5 py-4">Ticker</th>
         <th class="text-right px-5 py-4">Score</th>
         <th class="text-left px-5 py-4">Bands</th>
-        <th class="text-center px-5 py-4">Taken</th>
+        <th class="text-center px-5 py-4">Taken / blocked by</th>
         <th class="text-center px-5 py-4">Veto</th>
         <th class="text-right px-5 py-4">Outcome</th>
       </tr>
@@ -149,6 +149,18 @@ content %}
         <td class="px-5 py-3 text-center">
           {% if r.entered %}
           <span class="text-emerald-400">●</span>
+          {% elif r.blocked_by == "regime" %}
+          <span
+            class="text-xs px-2 py-0.5 rounded-full bg-sky-950 text-sky-400"
+            title="Cleared scoring, but breadth was below the floor — no new entries that day"
+            >regime</span
+          >
+          {% elif r.blocked_by == "veto" %}
+          <span class="text-xs px-2 py-0.5 rounded-full bg-amber-900 text-amber-300"
+            >veto</span
+          >
+          {% elif r.blocked_by == "score" %}
+          <span class="text-xs text-slate-600">score</span>
           {% else %}
           <span class="text-slate-700">○</span>
           {% endif %}

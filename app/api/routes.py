@@ -8,6 +8,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import desc, func
 from contextlib import asynccontextmanager
 
+from app.core.config import settings
 from app.core.logging import setup_logging, log_buffer
 
 from app.core.database import get_db, init_db
@@ -154,6 +155,27 @@ def history(request: Request):
 DECISIONS_PAGE_SIZE = 200
 
 
+def _blocked_by(record) -> str | None:
+    """Which gate stopped a candidate, in one word, or None if it was taken.
+
+    Derived from the structured fields rather than parsing `block_reason`, and
+    ordered by where the gates sit in the pipeline: a candidate that failed on
+    score never reached the regime check or the veto.
+
+    Surfaced in the table because a row showing a passing veto and no trade
+    otherwise looks like a contradiction until you expand it.
+    """
+    if record.entered:
+        return None
+    if record.score is not None and record.score < settings.rules_confidence_threshold:
+        return "score"
+    if record.regime_open is False:
+        return "regime"
+    if record.veto_verdict == "KILL":
+        return "veto"
+    return "blocked"
+
+
 @app.get("/decisions", response_class=HTMLResponse)
 def decisions(request: Request):
     """Every candidate the scan evaluated, bought or not, with the veto's verdict.
@@ -185,6 +207,7 @@ def decisions(request: Request):
                     if b
                 ],
                 "entered": r.entered,
+                "blocked_by": _blocked_by(r),
                 "block_reason": r.block_reason,
                 "veto_verdict": r.veto_verdict,
                 "veto_reason": r.veto_reason,
