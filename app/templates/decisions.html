@@ -161,6 +161,12 @@ content %}
           >
           {% elif r.blocked_by == "score" %}
           <span class="text-xs text-slate-600">score</span>
+          {% elif r.blocked_by in ("fundamentals", "risk") %}
+          <span
+            class="text-xs text-slate-600"
+            title="Rejected before scoring, by the {{ r.blocked_by }} gate"
+            >{{ r.blocked_by }}</span
+          >
           {% else %}
           <span class="text-slate-700">○</span>
           {% endif %}
